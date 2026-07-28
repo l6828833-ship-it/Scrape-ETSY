@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Etsy Search Scraper</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand">
+        <img src="../../icons/icon32.png" alt="" width="22" height="22" />
+        <h1>Etsy Search Scraper</h1>
+      </div>
+      <div class="header-actions">
+        <button id="openTab" class="btn btn-ghost" type="button" title="Open the full dashboard in a tab">
+          Open in tab
+        </button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- ------------------------------------------------------ configuration -->
+      <section class="panel" aria-labelledby="cfg-title">
+        <h2 id="cfg-title" class="panel-title">Search input</h2>
+
+        <label class="field">
+          <span class="label">Queries <em>(one keyword per line)</em></span>
+          <textarea id="queries" rows="4" spellcheck="false"
+            placeholder="handmade ceramic mug&#10;linen apron&#10;custom pet portrait"></textarea>
+          <span class="hint" id="queriesHint">0 queries</span>
+        </label>
+
+        <div class="grid">
+          <label class="field">
+            <span class="label">Pages / query</span>
+            <input id="maxPagesPerQuery" type="number" min="1" max="250" step="1" />
+          </label>
+          <label class="field">
+            <span class="label">Sort order</span>
+            <select id="sortOrder">
+              <option value="most_relevant">Most relevant</option>
+              <option value="price_asc">Price: low to high</option>
+              <option value="price_desc">Price: high to low</option>
+              <option value="date_desc">Most recent</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="label">Min price</span>
+            <input id="minPrice" type="number" min="0" step="0.01" placeholder="any" />
+          </label>
+          <label class="field">
+            <span class="label">Max price</span>
+            <input id="maxPrice" type="number" min="0" step="0.01" placeholder="any" />
+          </label>
+          <label class="field">
+            <span class="label">Ship to</span>
+            <input id="shipTo" type="text" maxlength="2" placeholder="US" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span class="label">Engine</span>
+            <select id="engine">
+              <option value="hybrid">Hybrid (fetch + tab)</option>
+              <option value="fetch">Fetch only (fast)</option>
+              <option value="tab">Tab only (renders JS)</option>
+            </select>
+          </label>
+        </div>
+
+        <details id="advanced" class="advanced">
+          <summary>Advanced</summary>
+          <div class="grid">
+            <label class="field">
+              <span class="label">Concurrency</span>
+              <input id="maxConcurrency" type="number" min="1" max="8" step="1" />
+            </label>
+            <label class="field">
+              <span class="label">Retries</span>
+              <input id="maxRequestRetries" type="number" min="0" max="10" step="1" />
+            </label>
+            <label class="field">
+              <span class="label">Delay min (ms)</span>
+              <input id="minDelayMs" type="number" min="0" max="120000" step="100" />
+            </label>
+            <label class="field">
+              <span class="label">Delay max (ms)</span>
+              <input id="maxDelayMs" type="number" min="0" max="300000" step="100" />
+            </label>
+            <label class="field">
+              <span class="label">De-duplicate</span>
+              <select id="dedupe">
+                <option value="per_query">Per query</option>
+                <option value="global">Across all queries</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
+            <label class="field">
+              <span class="label">Position numbering</span>
+              <select id="positionMode">
+                <option value="per_page">1..n per page</option>
+                <option value="global">Continuous across pages</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="check">
+            <input id="stopOnEmptyPage" type="checkbox" />
+            <span>Stop paginating a query when a page returns no listings</span>
+          </label>
+          <label class="check">
+            <input id="manualCaptchaSolve" type="checkbox" />
+            <span>On a challenge page, focus the tab so I can solve it</span>
+          </label>
+          <label class="check">
+            <input id="keepTabsOpen" type="checkbox" />
+            <span>Keep scraped tabs open (debugging)</span>
+          </label>
+          <label class="check">
+            <input id="includeDebug" type="checkbox" />
+            <span>Include <code>_source</code> / <code>_sourceUrl</code> columns in exports</span>
+          </label>
+
+          <fieldset class="proxy">
+            <legend>Proxy configuration</legend>
+            <label class="check">
+              <input id="proxyEnabled" type="checkbox" />
+              <span>Route <code>*.etsy.com</code> through proxies</span>
+            </label>
+            <label class="field">
+              <span class="label">Proxy URLs (one per line)</span>
+              <textarea id="proxyList" rows="3" spellcheck="false"
+                placeholder="http://user:pass@residential.example.com:8000&#10;socks5://127.0.0.1:9050"></textarea>
+            </label>
+            <label class="field narrow">
+              <span class="label">Rotate every N requests</span>
+              <input id="proxyRotate" type="number" min="1" max="100" step="1" />
+            </label>
+            <p class="warn">
+              Chrome exposes only a browser-wide proxy setting. The PAC script scopes it to Etsy
+              domains and is reverted when the run ends, but other Etsy tabs are affected while it runs.
+            </p>
+          </fieldset>
+        </details>
+
+        <div class="actions">
+          <button id="start" class="btn btn-primary" type="button">Start scraping</button>
+          <button id="stop" class="btn btn-danger" type="button" disabled>Stop</button>
+          <button id="scrapeTab" class="btn btn-ghost" type="button"
+            title="Extract listings from the Etsy search page in the active tab">
+            Scrape current tab
+          </button>
+        </div>
+      </section>
+
+      <div class="column">
+      <!-- ------------------------------------------------------------ progress -->
+      <section class="panel" aria-labelledby="run-title">
+        <h2 id="run-title" class="panel-title">
+          Run status <span id="statusPill" class="pill pill-idle">idle</span>
+        </h2>
+
+        <div class="progress">
+          <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+        </div>
+        <p id="statusMessage" class="status-message">Ready.</p>
+
+        <dl class="stats">
+          <div><dt>Rows</dt><dd id="statRows">0</dd></div>
+          <div><dt>Pages</dt><dd id="statPages">0 / 0</dd></div>
+          <div><dt>Queries</dt><dd id="statQueries">0 / 0</dd></div>
+          <div><dt>Dupes</dt><dd id="statDupes">0</dd></div>
+          <div><dt>Retries</dt><dd id="statRetries">0</dd></div>
+          <div><dt>Blocks</dt><dd id="statBlocks">0</dd></div>
+        </dl>
+
+        <p id="activeList" class="active-list" hidden></p>
+
+        <h3 class="sub-title">Activity log</h3>
+        <ol id="log" class="log" aria-live="polite"></ol>
+      </section>
+
+      <!-- ------------------------------------------------------------- results -->
+      <section class="panel" aria-labelledby="res-title">
+        <h2 id="res-title" class="panel-title">
+          Results <span id="rowCount" class="pill">0 rows</span>
+        </h2>
+
+        <div class="actions">
+          <button data-export="json" class="btn btn-ghost" type="button">JSON</button>
+          <button data-export="jsonl" class="btn btn-ghost" type="button">JSONL</button>
+          <button data-export="csv" class="btn btn-ghost" type="button">CSV</button>
+          <button data-export="xlsx" class="btn btn-ghost" type="button">Excel</button>
+          <button id="copyJson" class="btn btn-ghost" type="button">Copy JSON</button>
+          <button id="clear" class="btn btn-danger-ghost" type="button">Clear</button>
+        </div>
+
+        <div class="table-wrap">
+          <table class="preview">
+            <thead>
+              <tr>
+                <th>#</th><th>Query</th><th>P</th><th>Title</th><th>Price</th>
+                <th>Shop</th><th>Rating</th><th>Reviews</th><th>Flags</th>
+              </tr>
+            </thead>
+            <tbody id="previewBody">
+              <tr class="empty"><td colspan="9">No rows yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="hint" id="previewHint"></p>
+      </section>
+      </div>
+    </main>
+
+    <footer class="app-footer">
+      <span id="toast" class="toast" hidden></span>
+      <span class="legal">
+        Scrapes only pages your browser can already see. Respect Etsy's Terms of Use and keep request
+        rates modest.
+      </span>
+    </footer>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

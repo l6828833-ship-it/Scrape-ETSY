@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<!--
+  Offline fixture that mirrors the shape of an Etsy search results page
+  (https://www.etsy.com/search?q=handmade+ceramic+mug) closely enough to
+  exercise both extraction strategies:
+
+    * JSON-LD ItemList  -> listings 1027105561 and 1027105562
+    * DOM listing cards  -> all four listings, incl. one sponsored card, one
+      bestseller + free-shipping card, and 1027105564 which is deliberately
+      ABSENT from the JSON-LD block so the merge path is covered.
+
+  Hand-written from the documented public structure; no Etsy markup copied.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Handmade ceramic mug - Etsy</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "numberOfItems": 3,
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "item": {
+              "@type": "Product",
+              "name": "Handmade Ceramic Mug, Speckled Stoneware Coffee Cup",
+              "url": "https://www.etsy.com/listing/1027105561/handmade-ceramic-mug-speckled-stoneware?click_key=abc&click_sum=def",
+              "image": "https://i.etsystatic.com/12345678/r/il/aaaaaa/1234567890/il_570xN.1234567890_abcd.jpg",
+              "offers": {
+                "@type": "Offer",
+                "price": "28.00",
+                "priceCurrency": "USD",
+                "availability": "https://schema.org/InStock",
+                "seller": { "@type": "Organization", "name": "ArtisanPottery" }
+              },
+              "aggregateRating": {
+                "@type": "AggregateRating",
+                "ratingValue": "4.8",
+                "reviewCount": "342"
+              }
+            }
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "item": {
+              "@type": "Product",
+              "name": "Minimalist Matte Black Mug",
+              "url": "https://www.etsy.com/listing/1027105562/minimalist-matte-black-mug",
+              "image": [
+                "https://i.etsystatic.com/22222222/r/il/bbbbbb/2222222222/il_570xN.2222222222_efgh.jpg"
+              ],
+              "offers": {
+                "@type": "Offer",
+                "lowPrice": "19.50",
+                "priceCurrency": "USD"
+              }
+            }
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "item": {
+              "@type": "Product",
+              "name": "Sponsored Rustic Clay Tumbler",
+              "url": "https://www.etsy.com/listing/1027105563/sponsored-rustic-clay-tumbler",
+              "offers": { "@type": "Offer", "price": "1,249.99", "priceCurrency": "USD" }
+            }
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <div id="content">
+      <h1 class="search-title">Handmade ceramic mug</h1>
+      <div data-search-results-container>
+        <ol class="responsive-listing-grid wt-grid">
+          <!-- 1: full data, everything present -->
+          <li class="wt-list-unstyled">
+            <div class="v2-listing-card js-merch-stash-check-listing" data-listing-id="1027105561">
+              <a
+                class="listing-link"
+                href="https://www.etsy.com/listing/1027105561/handmade-ceramic-mug-speckled-stoneware?click_key=abc&amp;click_sum=def&amp;ref=search_grid-1"
+                title="Handmade Ceramic Mug, Speckled Stoneware Coffee Cup"
+              >
+                <div class="v2-listing-card__img">
+                  <img
+                    class="wt-position-absolute wt-width-full"
+                    src="https://i.etsystatic.com/12345678/r/il/aaaaaa/1234567890/il_340x270.1234567890_abcd.jpg"
+                    srcset="
+                      https://i.etsystatic.com/12345678/r/il/aaaaaa/1234567890/il_340x270.1234567890_abcd.jpg 340w,
+                      https://i.etsystatic.com/12345678/r/il/aaaaaa/1234567890/il_570xN.1234567890_abcd.jpg   570w
+                    "
+                    alt="Handmade Ceramic Mug"
+                  />
+                </div>
+                <div class="v2-listing-card__info">
+                  <h3 class="v2-listing-card__title wt-text-caption">
+                    Handmade Ceramic Mug, Speckled Stoneware Coffee Cup
+                  </h3>
+                  <div class="wt-display-flex-xs wt-align-items-center">
+                    <span class="wt-text-title-01" aria-hidden="true">4.8</span>
+                    <input type="hidden" name="rating" value="4.8" />
+                    <span class="wt-screen-reader-only">4.8 out of 5 stars</span>
+                    <p class="wt-text-body-smaller wt-text-gray">(342)</p>
+                  </div>
+                  <div class="n-listing-card__price">
+                    <span class="currency-symbol">$</span><span class="currency-value">28.00</span>
+                  </div>
+                  <p class="wt-text-caption wt-text-gray">
+                    <span class="wt-text-caption wt-text-truncate">ArtisanPottery</span>
+                  </p>
+                  <p class="wt-text-caption wt-text-gray-darker">FREE shipping</p>
+                </div>
+              </a>
+            </div>
+          </li>
+
+          <!-- 2: no rating, no badges, price via lowPrice in JSON-LD -->
+          <li class="wt-list-unstyled">
+            <div class="v2-listing-card js-merch-stash-check-listing" data-listing-id="1027105562">
+              <a class="listing-link" href="/listing/1027105562/minimalist-matte-black-mug?ref=search_grid-2">
+                <img class="wt-position-absolute" src="//i.etsystatic.com/22222222/r/il/bbbbbb/2222222222/il_340x270.2222222222_efgh.jpg" alt="" />
+                <h3 class="v2-listing-card__title wt-text-caption">Minimalist Matte Black Mug</h3>
+                <div class="n-listing-card__price">
+                  <span class="currency-symbol">$</span><span class="currency-value">19.50</span>
+                </div>
+                <p class="wt-text-caption wt-text-gray">
+                  <span class="wt-text-caption wt-text-truncate">NordicClayStudio</span>
+                </p>
+              </a>
+            </div>
+          </li>
+
+          <!-- 3: sponsored placement, thousands separator in price -->
+          <li class="wt-list-unstyled">
+            <div class="v2-listing-card js-merch-stash-check-listing" data-listing-id="1027105563" data-ad-id="99887766">
+              <a class="listing-link" href="/listing/1027105563/sponsored-rustic-clay-tumbler?ref=search_grid-3">
+                <img class="wt-position-absolute" src="https://i.etsystatic.com/33333333/r/il/cccccc/3333333333/il_340x270.3333333333_ijkl.jpg" alt="" />
+                <h3 class="v2-listing-card__title wt-text-caption">Sponsored Rustic Clay Tumbler</h3>
+                <div class="n-listing-card__price">
+                  <span class="currency-symbol">$</span><span class="currency-value">1,249.99</span>
+                </div>
+                <p class="wt-text-caption wt-text-gray">Ad by Etsy seller KilnAndClayCo</p>
+              </a>
+            </div>
+          </li>
+
+          <!-- 4: present in the DOM only (not in JSON-LD), EUR, bestseller -->
+          <li class="wt-list-unstyled">
+            <div class="v2-listing-card js-merch-stash-check-listing" data-listing-id="1027105564">
+              <a class="listing-link" href="/listing/1027105564/hand-thrown-espresso-cup-set?ref=search_grid-4">
+                <img class="wt-position-absolute" src="https://i.etsystatic.com/44444444/r/il/dddddd/4444444444/il_340x270.4444444444_mnop.jpg" alt="" />
+                <h3 class="v2-listing-card__title wt-text-caption">Hand Thrown Espresso Cup Set of 2</h3>
+                <div class="wt-display-flex-xs">
+                  <input type="hidden" name="rating" value="5.0" />
+                  <span class="wt-screen-reader-only">5.0 out of 5 stars</span>
+                  <p class="wt-text-body-smaller">(1,204)</p>
+                </div>
+                <div class="n-listing-card__price">
+                  <span class="currency-value">42,00</span><span class="currency-symbol">&euro;</span>
+                </div>
+                <p class="wt-text-caption wt-text-gray">
+                  <span class="wt-text-caption wt-text-truncate">CeramicaLisboa</span>
+                </p>
+                <span class="wt-badge">Bestseller</span>
+                <p class="wt-text-caption">FREE shipping</p>
+              </a>
+            </div>
+          </li>
+        </ol>
+
+        <nav class="search-pagination">
+          <a href="/search?q=handmade+ceramic+mug&amp;page=2&amp;ref=pagination" data-page="2">Next page</a>
+        </nav>
+      </div>
+    </div>
+  </body>
+</html>
