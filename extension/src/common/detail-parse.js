@@ -38,9 +38,24 @@
     title: ['h1[data-buy-box-listing-title]', 'h1.wt-text-body-01', 'h1'],
     description: [
       '[data-product-details-description-text-content]',
-      '#wt-content-toggle-product-details-read-more p',
       '[data-id="description-text"]',
+      '[data-appears-component-name="listing_page_description"]',
+      '[data-component="listing-page-description"]',
+      '#wt-content-toggle-product-details-read-more',
+      '#listing-page-description',
       '.listing-page-description',
+      '[data-buy-box-region="description"]',
+    ],
+    /**
+     * Last-resort description sources. These meta tags are part of Etsy's SEO /
+     * social markup, so they survive front-end redesigns that rename classes —
+     * which is exactly when the selectors above stop matching. They hold a
+     * truncated description, so they are only used when nothing better is found.
+     */
+    descriptionMeta: [
+      'meta[property="og:description"]',
+      'meta[name="twitter:description"]',
+      'meta[name="description"]',
     ],
     price: ['[data-buy-box-region="price"] .currency-value', 'p[data-buy-box-region="price"]', '.wt-text-title-larger .currency-value'],
     currencySymbol: ['[data-buy-box-region="price"] .currency-symbol', '.currency-symbol'],
@@ -243,8 +258,7 @@
 
     out.title = text(first(doc, SELECTORS.title)) || null;
 
-    const descEl = first(doc, SELECTORS.description);
-    if (descEl) out.description = text(descEl) || null;
+    out.description = readDescription(doc);
 
     const priceEl = first(doc, SELECTORS.price);
     if (priceEl) out.price = P.parsePrice(text(priceEl));
@@ -326,6 +340,53 @@
 
     out.detailSource = 'dom';
     return out;
+  }
+
+  /** UI chrome that ends up inside the description container. */
+  const DESCRIPTION_NOISE = /^(?:read (?:more|less)|show (?:more|less)|loading…?|more)$/i;
+
+  /**
+   * Collect every plausible description and keep the longest.
+   *
+   * Two reasons this is not simply "first selector that matches":
+   *   * Etsy renames the description container periodically, so a single miss
+   *     used to yield null with no fallback at all.
+   *   * The container is often rendered collapsed, with a short teaser in one
+   *     element and the full text in a sibling — taking the first match gets the
+   *     teaser. Longest wins instead.
+   */
+  function readDescription(doc) {
+    if (!doc || typeof doc.querySelector !== 'function') return null;
+    const candidates = [];
+
+    for (const selector of SELECTORS.description) {
+      let nodes = [];
+      try {
+        nodes = Array.from(doc.querySelectorAll(selector));
+      } catch (_) {
+        continue;
+      }
+      for (const node of nodes) candidates.push(text(node));
+    }
+
+    for (const selector of SELECTORS.descriptionMeta) {
+      const node = first(doc, [selector]);
+      const content = node && node.getAttribute ? node.getAttribute('content') : null;
+      if (content) candidates.push(String(content).replace(/\s+/g, ' ').trim());
+    }
+
+    return pickLongestText(candidates);
+  }
+
+  function pickLongestText(candidates) {
+    let best = null;
+    for (const raw of candidates) {
+      const value = String(raw || '').replace(/\s+/g, ' ').trim();
+      if (!value || DESCRIPTION_NOISE.test(value)) continue;
+      if (!best || value.length > best.length) best = value;
+    }
+    if (!best) return null;
+    return best.length > 20000 ? `${best.slice(0, 20000)}…` : best;
   }
 
   function readQuantity(doc, blob) {
@@ -670,7 +731,9 @@
       listingId: listingId ? String(listingId) : null,
       url: url ? P.cleanListingUrl(url) : null,
       title: pick(dom.title, ld.title),
-      description: pick(ld.description, dom.description),
+      // Etsy's JSON-LD description is frequently a truncated summary, so take
+      // whichever source actually carries more text.
+      description: pickLongestText([ld.description, dom.description]),
       price: price === null ? null : price,
       currency: pick(dom.currency, ld.currency),
       originalPrice: originalPrice === null ? null : originalPrice,
@@ -734,6 +797,8 @@
     SELECTORS,
     parseListingPage,
     parseReviews,
+    readDescription,
+    pickLongestText,
     readFreeShipping,
     readMemberSince,
     readTags,
