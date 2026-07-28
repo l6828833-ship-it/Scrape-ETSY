@@ -22,6 +22,14 @@
   Card 9005 — the control: a genuine rating, review count and badges, which must
     still be extracted.
 
+  Cards 9008/9009 — the star-widget shape taken from a real Etsy listing page.
+    The review count is published only in the widget's accessible label
+    ("Rating: 4.94 out of 5 stars, 779 reviews"); nothing in the visible text
+    states it. A textContent-only scan therefore reported reviewCount null for
+    almost every row of a live run. 9008 has the rating inputs (the exact
+    4.94 next to the rounded 5 that the visible stars show), 9009 has the label
+    alone, on a `title` attribute, with no visible number anywhere.
+
   Hand-written from the documented public structure; no Etsy markup copied.
 -->
 <html lang="en">
@@ -118,6 +126,49 @@
               </div>
               <p class="wt-text-caption">Instant Download · Ready in minutes</p>
               <p class="wt-text-caption"><span class="wt-text-caption">By PrintableCo</span></p>
+            </a>
+          </div>
+        </li>
+
+        <!-- 9008: the star widget shape observed on a real Etsy page. The review
+             count exists ONLY in the widget's aria-label — no parenthesised
+             number is rendered anywhere in the card — so a textContent-only
+             scan reported reviewCount null for nearly every live row. Note the
+             two inputs: `rating` is exact, `initial-rating` is rounded, and the
+             screen-reader line repeats the rounded value. -->
+        <li>
+          <div class="v2-listing-card" data-listing-id="9008">
+            <a class="listing-link" href="/listing/9008/2026-family-command-center">
+              <h3 class="v2-listing-card__title">2026 Family Command Center Printable</h3>
+              <div class="n-listing-card__price">
+                <span class="currency-symbol">$</span><span class="currency-value">5.75</span>
+              </div>
+              <p class="wt-text-caption"><span class="wt-text-caption">Designed by CommandCenterCo</span></p>
+              <span data-stars-svg-container aria-label="Rating: 4.94 out of 5 stars, 779 reviews">
+                <input type="hidden" name="rating" value="4.94" />
+                <input type="hidden" name="initial-rating" value="5" />
+                <span class="wt-screen-reader-only">5 out of 5 stars</span>
+                <svg aria-hidden="true"><use href="#stars"></use></svg>
+              </span>
+              <p class="wt-text-caption">Digital Download</p>
+            </a>
+          </div>
+        </li>
+
+        <!-- 9009: same accessible label, but no rating input and no visible
+             number at all — the label has to carry both the rating and the
+             count on its own, from a `title` attribute this time. -->
+        <li>
+          <div class="v2-listing-card" data-listing-id="9009">
+            <a class="listing-link" href="/listing/9009/2026-teacher-planner">
+              <h3 class="v2-listing-card__title">2026 Teacher Planner Bundle</h3>
+              <div class="n-listing-card__price">
+                <span class="currency-symbol">$</span><span class="currency-value">6.40</span>
+              </div>
+              <p class="wt-text-caption"><span class="wt-text-caption">By ClassroomPrintables</span></p>
+              <div class="stars-svg-container" title="Rating: 4.5 out of 5 stars, 1,204 reviews">
+                <svg aria-hidden="true"><use href="#stars"></use></svg>
+              </div>
             </a>
           </div>
         </li>

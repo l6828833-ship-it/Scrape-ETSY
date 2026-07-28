@@ -177,6 +177,7 @@ const extractDetailSource = readFileSync(path.join(root, 'extension/src/content/
 const searchFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-search-page.html')).href;
 const regressionFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-search-page-regressions.html')).href;
 const listingFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-listing-page.html')).href;
+const liveShapeFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-listing-page-live-shape.html')).href;
 const ehuntFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-listing-page-ehunt.html')).href;
 const ehuntParseSource = readFileSync(path.join(root, 'extension/src/common/ehunt-parse.js'), 'utf8');
 const challengeFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-challenge-page.html')).href;
@@ -512,6 +513,72 @@ try {
     await closePage(targetId);
   }
 
+  // ------------------------------ structures taken from a real listing page: a
+  // "<"-separated category with no breadcrumb, tenure in months with no start
+  // year, a JSON-LD review array, and a lazy-loaded (empty) tags module.
+  {
+    const { session, targetId } = await openPage(liveShapeFixture);
+    await session.evaluate(parseSource);
+    await session.evaluate(detailParseSource);
+
+    const live = JSON.parse(await session.evaluate(`JSON.stringify(EtsyDetail.parseListingPage({
+      html: document.documentElement.outerHTML,
+      doc: document,
+      context: { listingId: '4451164796', scrapeReviews: true, maxReviews: 20,
+                 scrapedAt: '2026-07-28T09:00:00Z' }
+    }))`));
+    const L = live.record;
+
+    await test('falls back to the "<"-separated category when no breadcrumb exists', () => {
+      assert.ok(L, 'no record returned');
+      assert.equal(L.categoryPath, 'Paper & Party Supplies > Paper > Calendars & Planners');
+    });
+
+    await test('reports shop tenure in months and leaves the year unknown', () => {
+      assert.equal(L.shopAgeMonths, 11, '"11 months on Etsy"');
+      assert.equal(L.shopMemberSince, null, 'the page never stated a start year');
+      assert.equal(L.shopName, 'KidsPlanPrintables');
+      assert.equal(L.shopTotalSales, 779);
+    });
+
+    await test('merges DOM and JSON-LD reviews without duplicating', () => {
+      assert.equal(live.reviews.length, 3, '1 in the DOM + 3 in JSON-LD, 1 shared');
+      assert.equal(live.counts.reviewsFromJsonLd, 3);
+      assert.equal(L.reviewsCaptured, 3);
+      const shared = live.reviews.find((r) => r.reviewer === 'quietmornings');
+      assert.equal(shared.photoCount, 1, 'the DOM copy kept its photo');
+      assert.equal(shared.variation, 'Size: A4');
+      assert.match(shared.comment, /Colours came out great/,
+        'the collapsed DOM teaser was completed from the JSON-LD body');
+      assert.deepEqual(live.reviews.map((r) => r.rating).sort(), [4, 5, 5]);
+    });
+
+    await test('a lazy-loaded tags module yields no tags rather than junk', () => {
+      // The served HTML has no /market/ links at all, so tag harvesting on this
+      // page genuinely requires the tab engine. Reporting an empty set is the
+      // honest outcome; inventing tags from the title would not be.
+      assert.equal(L.tags, null);
+      assert.equal(L.tagCount, null);
+      assert.equal(L.tagSource, null);
+    });
+
+    await test('the rest of the real-shape page still parses', () => {
+      assert.equal(L.price, 2.59);
+      assert.equal(L.rating, 4.94);
+      assert.equal(L.reviewCount, 132);
+      assert.equal(L.favoritesCount, 11);
+      assert.equal(L.isDigital, true);
+      assert.equal(L.productType, 'Digital');
+      assert.equal(L.listingCreationDate, '2026-07-28');
+      assert.match(L.description, /Get your family organised for August 2026/);
+      assert.ok(L.description.length > 200, 'the full description, not the og:description');
+      assert.equal(L.detailSource, 'jsonld+dom');
+    });
+
+    session.close();
+    await closePage(targetId);
+  }
+
   // ------------------------------------- regressions from a real "2026 calendar
   // printable" run: price leaking into rating, shop-name prefixes, shop-level
   // review counts, and badge false positives.
@@ -586,6 +653,70 @@ try {
       assert.equal(r.shopName, 'PrintableCo');
       assert.equal(r.rating, null, 'no stars on this card, so still null');
     });
+
+    await test('review count is read from the star widget aria-label', () => {
+      // The shape a real Etsy page uses: the count is published only in the
+      // accessible label, so textContent-only scanning missed it everywhere.
+      const r = byId['9008'];
+      assert.equal(r.rating, 4.94, 'exact rating from input[name="rating"]');
+      assert.equal(r.reviewCount, 779, 'count came from the aria-label');
+      assert.equal(r.price, 5.75);
+      assert.equal(r.shopName, 'CommandCenterCo');
+      assert.equal(r.isDigital, true);
+    });
+
+    await test('the label alone carries both rating and count', () => {
+      const r = byId['9009'];
+      assert.equal(r.rating, 4.5, 'no rating input, only the title label');
+      assert.equal(r.reviewCount, 1204, '"1,204 reviews" parsed with the comma');
+      assert.equal(r.price, 6.4, 'and the price is untouched by either');
+      assert.equal(r.shopName, 'ClassroomPrintables');
+    });
+
+    await test('a "reviews" label outside the rating widget is ignored', async () => {
+      // Only rating-scoped labels are read. A shop-wide link labelled "8,214
+      // reviews" is exactly the leak that once gave every listing from one shop
+      // the same count, so it must not be picked up.
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const build = (inner) => new DOMParser().parseFromString(
+          '<html><body><div class="card">' + inner + '</div></body></html>', 'text/html'
+        ).querySelector('.card');
+        return JSON.stringify({
+          shopLink: EtsyParse.reviewCountFromLabels(
+            build('<a href="/shop/X" aria-label="See all 8,214 reviews for this shop">Shop</a>')),
+          ratingWidget: EtsyParse.reviewCountFromLabels(
+            build('<span data-stars-svg-container aria-label="Rating: 4.9 out of 5 stars, 41 reviews"></span>')),
+          none: EtsyParse.reviewCountFromLabels(build('<p>no labels here</p>'))
+        });
+      })()`));
+      assert.equal(out.shopLink, null, 'a shop-level label is not this listing\'s count');
+      assert.equal(out.ratingWidget, 41);
+      assert.equal(out.none, null);
+    });
+
+    await test('a shop rating widget inside a card is still rejected', async () => {
+      // The dangerous case the scope test alone cannot catch: Etsy names the
+      // shop's own rating widget "rating" too, so it satisfies every selector.
+      // The label has to be about this listing, and it says otherwise.
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const build = (inner) => new DOMParser().parseFromString(
+          '<html><body><div class="card">' + inner + '</div></body></html>', 'text/html'
+        ).querySelector('.card');
+        return JSON.stringify({
+          shopWidget: EtsyParse.reviewCountFromLabels(
+            build('<div class="shop-rating" aria-label="Shop rating: 4.8 out of 5 stars, 8,214 reviews"></div>')),
+          noRatingStated: EtsyParse.reviewCountFromLabels(
+            build('<div class="rating-block" aria-label="Jump to the 1,204 reviews"></div>')),
+          listing: EtsyParse.reviewCountFromLabels(
+            build('<div class="rating-block" aria-label="Rating: 4.8 out of 5 stars, 1,204 reviews"></div>'))
+        });
+      })()`));
+      assert.equal(out.shopWidget, null, 'the label names the shop, so it is not used');
+      assert.equal(out.noRatingStated, null, 'a count with no rating stated is not trusted');
+      assert.equal(out.listing, 1204);
+    });
+
+
 
     await test('a price-styled number is still never a rating', () => {
       // The original bug must stay fixed while recall is restored.

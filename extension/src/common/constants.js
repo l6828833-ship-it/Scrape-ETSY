@@ -173,7 +173,9 @@ export const DETAIL_FIELDS = [
   'freeShipping',
   // seller authority
   'shopName', 'shopUrl', 'shopTotalSales', 'isStarSeller', 'shopLocation',
-  'shopMemberSince',
+  // Two independent tenure fields because Etsy renders one or the other:
+  // a start year ("On Etsy since 2019") or a duration ("11 months on Etsy").
+  'shopMemberSince', 'shopAgeMonths',
   // ratings
   'rating', 'reviewCount', 'shopReviewCount', 'reviewsCaptured',
   // derived trend metrics (see common/metrics.js)

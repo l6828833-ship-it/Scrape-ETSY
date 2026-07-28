@@ -262,6 +262,140 @@
       if (path.length) out.categoryPath = path.join(' > ');
     }
 
+    // Etsy also states the taxonomy on the Product node as a single string with
+    // "<" separators, broadest first: "Paper & Party Supplies < Paper < ...".
+    // Kept separate from `categoryPath` so the structured BreadcrumbList and the
+    // DOM breadcrumb both still take precedence over this flattened form.
+    if (product && product.category) {
+      const parts = String(product.category)
+        .split(/\s*<\s*/)
+        .map((s) => s.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      if (parts.length) out.categoryPathFallback = parts.join(' > ');
+    }
+
+    return out;
+  }
+
+  /**
+   * Reviews straight out of the listing's JSON-LD `review[]` array.
+   *
+   * This matters beyond redundancy: in fetch mode there is no live DOM at all, so
+   * before this the reviews list was always empty for fetched pages. The JSON-LD
+   * block is served in the initial HTML, which makes reviews available without a
+   * tab. DOM reviews are still richer (photos, variation lines), so these only
+   * fill in — see mergeReviews().
+   */
+  function reviewsFromJsonLd(html) {
+    const P = base();
+    const out = [];
+    // Only the listing's own Product node. Reading `review[]` off every node
+    // would stamp this listing's id onto an Organization's shop reviews or a
+    // related product's reviews if Etsy ever emits either.
+    const product = jsonLdNodes(html).find((n) => /Product/i.test(typeOf(n)));
+    if (!product) return out;
+
+    for (const raw of [].concat(product.review || product.reviews || [])) {
+      if (!raw || typeof raw !== 'object') continue;
+      if (!/Review/i.test(typeOf(raw)) && !raw.reviewBody && !raw.reviewRating) continue;
+      const ratingNode = raw.reviewRating || raw.aggregateRating || null;
+      // Deliberately not `raw.name`: that is schema.org's headline, not the
+      // review body, and exporting a title as a comment misrepresents it.
+      const comment = raw.reviewBody || raw.description || '';
+      const rating = ratingNode ? P.parsePrice(ratingNode.ratingValue ?? ratingNode.value) : null;
+      if (!comment && rating === null) continue;
+      out.push({
+        reviewer: nameOf(raw.author) || nameOf(raw.creator) || null,
+        rating,
+        date: toIsoDate(raw.datePublished || raw.dateCreated || ''),
+        comment: comment ? String(comment).replace(/\s+/g, ' ').trim() : null,
+        // Null, not 0: JSON-LD says nothing about attachments, and "0 photos" is
+        // a claim about the review that this source cannot support. The DOM pass
+        // fills both in when it can see the card.
+        photoCount: null,
+        photos: null,
+        variation: null,
+        _source: 'jsonld',
+      });
+    }
+    return out;
+  }
+
+  /** Trailing "read more" affordances and ellipses are truncation, not content. */
+  const TEASER_TAIL = /(?:\s|…|\.{3})*\b(?:read|show|see)\s+(?:more|less)\b\s*$/i;
+
+  function normalizeComment(review) {
+    return String((review && review.comment) || '')
+      .replace(TEASER_TAIL, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  }
+
+  /** One comment is the opening of the other, i.e. teaser vs. full body. */
+  function commentsOverlap(a, b) {
+    const x = normalizeComment(a);
+    const y = normalizeComment(b);
+    if (x.length < 24 || y.length < 24) return false;
+    return x.startsWith(y) || y.startsWith(x);
+  }
+
+  function sameField(a, b, field) {
+    if (!a[field] || !b[field]) return null; // unknown, not a mismatch
+    return String(a[field]).toLowerCase().trim() === String(b[field]).toLowerCase().trim();
+  }
+
+  /**
+   * Do two review objects describe the same review?
+   *
+   * Index-based matching is useless here: the two sources order and paginate
+   * differently. Two signals are used, both vetoed by contradictions:
+   *
+   *   1. Same reviewer on the same date. Within a single listing that is
+   *      conclusive — two buyers sharing a display name and a day is negligible
+   *      next to the certainty of the match.
+   *   2. One comment is the opening of the other, because the DOM renders a
+   *      collapsed teaser while JSON-LD carries the full body. A minimum length
+   *      is required so short pleasantries ("Love it, thank you!") cannot merge
+   *      distinct reviews, and a *known* difference in reviewer or date vetoes
+   *      the match outright — two buyers posting identical text on different
+   *      days are two reviews, however similar they read.
+   */
+  function isSameReview(a, b) {
+    const sameReviewer = sameField(a, b, 'reviewer');
+    const sameDate = sameField(a, b, 'date');
+    if (sameReviewer === false || sameDate === false) return false;
+    if (sameReviewer && sameDate) return true;
+    return commentsOverlap(a, b);
+  }
+
+  /**
+   * DOM reviews first (only they carry photos and variation lines), then any
+   * JSON-LD review the DOM pass did not already produce. When both describe the
+   * same review the DOM copy is kept and its gaps are filled from JSON-LD.
+   */
+  function mergeReviews(domReviews, ldReviews) {
+    const out = (domReviews || []).slice();
+    for (const review of ldReviews || []) {
+      const match = out.find((existing) => isSameReview(existing, review));
+      if (!match) {
+        out.push(review);
+        continue;
+      }
+      for (const field of ['reviewer', 'rating', 'date', 'variation', 'photos', 'photoCount']) {
+        if (match[field] === null || match[field] === undefined || match[field] === '') {
+          match[field] = review[field];
+        }
+      }
+      // Etsy collapses long reviews in the DOM, so the longer text is the fuller
+      // one — but only when it is demonstrably the same text continued. Replacing
+      // the comment on a reviewer+date match alone would let one review's body be
+      // grafted onto another's photos.
+      if (commentsOverlap(match, review)
+        && String(review.comment || '').length > String(match.comment || '').length) {
+        match.comment = review.comment;
+      }
+    }
     return out;
   }
 
@@ -605,9 +739,54 @@
     if (sales) out.shopTotalSales = toInt(sales[1]);
     out.isStarSeller = /star seller/i.test(blob);
     out.shopMemberSince = readMemberSince(doc, blob);
+    out.shopAgeMonths = readShopAgeMonths(doc, blob);
     const location = readLocation(doc, blob);
     if (location) out.shopLocation = location;
     return out;
+  }
+
+  /**
+   * Shop tenure as Etsy actually renders it on many listings: "11 months on
+   * Etsy", "3 years on Etsy". A real listing page carried exactly this and no
+   * "since <year>" string anywhere, which is why `shopMemberSince` came back
+   * null for it.
+   *
+   * Reported in months, and deliberately NOT converted into a start year:
+   * "3 years on Etsy" could mean anywhere from 36 to 47 months, so a derived
+   * year would be a guess dressed up as a fact. `shopMemberSince` stays null in
+   * that case and this field carries what the page really said.
+   */
+  const TENURE_COMBINED = /(\d{1,3})\s*years?(?:[,\s]+(?:and\s+)?(\d{1,2})\s*months?)?\s+(?:on|selling on)\s+Etsy\b/i;
+  const TENURE_MONTHS = /(\d{1,3})\s*months?\s+(?:on|selling on)\s+Etsy\b/i;
+
+  function tenureFrom(source) {
+    const s = String(source || '');
+    // Years first, so "3 years, 2 months on Etsy" is not read as 2 months.
+    const combined = s.match(TENURE_COMBINED);
+    if (combined) {
+      const years = toInt(combined[1]) || 0;
+      const months = combined[2] ? toInt(combined[2]) || 0 : 0;
+      const total = years * 12 + months;
+      return total > 0 && total <= 300 ? total : null;
+    }
+    const monthsOnly = s.match(TENURE_MONTHS);
+    if (monthsOnly) {
+      const total = toInt(monthsOnly[1]);
+      return total !== null && total > 0 && total <= 300 ? total : null;
+    }
+    return null;
+  }
+
+  function readShopAgeMonths(doc, blob) {
+    // Scoped to short lines first, the same way readLocation is: a buyer writing
+    // "I've been on Etsy 6 years" in a review must not become the shop's age.
+    for (const node of all(doc, SELECTORS.textLine)) {
+      const t = text(node);
+      if (!t || t.length > 80) continue;
+      const months = tenureFrom(t);
+      if (months !== null) return months;
+    }
+    return tenureFrom(blob);
   }
 
   /**
@@ -765,9 +944,13 @@
 
     const ld = fromJsonLd(html);
     const dom = doc ? fromDom(doc) : {};
-    const reviews = doc && context.scrapeReviews !== false
-      ? parseReviews(doc, { limit: context.maxReviews })
-      : [];
+
+    const wantReviews = context.scrapeReviews !== false;
+    const limit = Number(context.maxReviews) > 0 ? Number(context.maxReviews) : 20;
+    const domReviews = wantReviews && doc ? parseReviews(doc, { limit }) : [];
+    // Works with `html` alone, so fetch-mode runs get reviews too.
+    const ldReviews = wantReviews ? reviewsFromJsonLd(html) : [];
+    const reviews = mergeReviews(domReviews, ldReviews).slice(0, limit);
 
     const record = finalizeDetail(ld, dom, context, reviews);
     return {
@@ -779,6 +962,7 @@
         jsonld: Object.keys(ld).filter((k) => ld[k] !== null && ld[k] !== undefined).length,
         dom: Object.keys(dom).filter((k) => dom[k] !== null && dom[k] !== undefined).length,
         reviews: reviews.length,
+        reviewsFromJsonLd: ldReviews.length,
       },
     };
   }
@@ -813,7 +997,7 @@
       availability: pick(ld.availability, dom.availability),
       mainImage: pick(ld.mainImage, dom.mainImage),
       imageCount: pick(dom.imageCount, ld.imageCount),
-      categoryPath: pick(ld.categoryPath, dom.categoryPath),
+      categoryPath: pick(ld.categoryPath, dom.categoryPath, ld.categoryPathFallback),
       listingCreationDate: pick(dom.listingCreationDate, ld.listingCreationDate),
 
       favoritesCount: pick(dom.favoritesCount),
@@ -845,6 +1029,9 @@
       isStarSeller: Boolean(dom.isStarSeller),
       shopLocation: pick(dom.shopLocation),
       shopMemberSince: pick(dom.shopMemberSince),
+      // Etsy shows either a start year or a tenure ("11 months on Etsy"), rarely
+      // both, so these two are independent rather than derived from each other.
+      shopAgeMonths: pick(dom.shopAgeMonths),
 
       rating: pick(ld.rating, dom.rating),
       reviewCount: pick(ld.reviewCount, dom.reviewCount),
@@ -880,9 +1067,13 @@
     pickLongestText,
     readFreeShipping,
     readMemberSince,
+    readShopAgeMonths,
     readTags,
     THIRD_PARTY_PANELS,
     fromJsonLd,
+    reviewsFromJsonLd,
+    mergeReviews,
+    isSameReview,
     fromDom,
     finalizeDetail,
     finalizeReview,

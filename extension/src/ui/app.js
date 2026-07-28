@@ -66,7 +66,11 @@ const PREVIEW_COLUMNS = {
     ['Qty', 'num', (r) => fmtOrDash(r.quantityAvailable)],
     ['Reviews', 'num', (r) => fmtOrDash(r.reviewCount)],
     ['Shop sales', 'num', (r) => fmtOrDash(r.shopTotalSales)],
-    ['Since', 'num', (r) => fmtOrDash(r.shopMemberSince)],
+    // Etsy shows a start year on some listings and a tenure on others, so show
+    // whichever the page actually gave us ("2019" or "11mo").
+    ['Shop age', 'num', (r) => (r.shopMemberSince != null
+      ? String(r.shopMemberSince)
+      : (r.shopAgeMonths != null ? `${r.shopAgeMonths}mo` : '—'))],
     ['Flags', 'flags', (r) => r],
     ['Gap', 'num', (r) => fmtOrDash(r.competitiveGapScore)],
     ['Opp', 'num', (r) => fmtOrDash(r.opportunityScore)],
