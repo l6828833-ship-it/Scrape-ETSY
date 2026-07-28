@@ -623,6 +623,46 @@ try {
     assert.match(out.hint, /Deep listing intelligence/, 'empty state should explain itself');
   });
 
+  await test('every dataset option states what is in it', async () => {
+    // The picker used to read "Search rows" / "Listing details", which gave no
+    // hint that tags and description are absent from the first one — the single
+    // most common cause of "the field is missing from my export".
+    const raw = await ui.evaluate(`JSON.stringify(
+      [...document.getElementById('dataset').options].map(o => o.textContent.trim())
+    )`);
+    const labels = JSON.parse(raw);
+    const search = labels.find((l) => /^Search rows/.test(l));
+    const details = labels.find((l) => /^Listing details/.test(l));
+    assert.match(search, /no tags/i, 'the grid option must say tags are not in it');
+    assert.match(details, /tags/i, 'the details option must say tags are in it');
+  });
+
+  await test('the search-grid preview points at where tags actually live', async () => {
+    const hint = await ui.evaluate(`(async () => {
+      const select = document.getElementById('dataset');
+      select.value = 'search';
+      select.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 400));
+      return document.getElementById('previewHint').textContent;
+    })()`);
+    // Stated in both the empty and the populated state, because a user hunting a
+    // missing field looks at this line either way.
+    assert.match(hint, /Listing details/,
+      `search preview should name the details dataset, got: ${hint}`);
+  });
+
+  await test('the deep-scrape control names the fields it gates', async () => {
+    const raw = await ui.evaluate(`JSON.stringify({
+      summary: document.querySelector('#deep summary').textContent,
+      label: document.querySelector('#deep .check span').textContent
+    })`);
+    const out = JSON.parse(raw);
+    // This section is collapsed by default, so the summary is all a user sees.
+    assert.match(out.summary, /tags/i, 'collapsed summary must mention tags');
+    assert.match(out.label, /tags/i);
+    assert.match(out.label, /description/i);
+  });
+
   await test('multi-sheet workbook builds inside the extension page', async () => {
     const raw = await ui.evaluate(`(async () => {
       const { toWorkbook } = await import('/src/ui/export.js');
