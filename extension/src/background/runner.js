@@ -181,6 +181,9 @@ export async function startRun(rawSettings) {
     collected: new Map(),
     /** Listings whose detail fetch was blocked -> tab engine from now on. */
     detailEscalated: false,
+    /** How often each key deep-scrape field came back empty. */
+    detailGaps: {},
+    detailsCaptured: 0,
   };
 
   const workerCount = Math.min(settings.maxConcurrency, Math.max(1, settings.queries.length * settings.maxPagesPerQuery));
@@ -448,6 +451,7 @@ async function detailPhase(ctx) {
 
   await Promise.all(workers);
   await history.persistNow();
+  await reportDetailCoverage(ctx.detailGaps, ctx.detailsCaptured, ctx.detailEscalated ? ENGINES.TAB : settings.engine);
 }
 
 async function processDetailTask(ctx, target, label) {
@@ -536,6 +540,11 @@ async function processDetailTask(ctx, target, label) {
       reviewCount = await store.addReviews(outcome.reviews.slice(0, settings.maxReviewsPerListing));
     }
 
+    ctx.detailsCaptured += 1;
+    for (const label of missingDetailFields(enriched)) {
+      ctx.detailGaps[label] = (ctx.detailGaps[label] || 0) + 1;
+    }
+
     await store.bumpProgress({ detailsDone: 1, reviews: reviewCount });
     await store.log('success',
       `${label} -> ${describeDetail(enriched)}${reviewCount ? `, ${reviewCount} review(s)` : ''}`);
@@ -553,8 +562,57 @@ function describeDetail(d) {
   if (d.favoritesPerDay !== null && d.favoritesPerDay !== undefined) bits.push(`${d.favoritesPerDay}/day`);
   if (d.cartCount) bits.push(`${d.cartCount} in cart`);
   if (d.quantityAvailable !== null && d.quantityAvailable !== undefined) bits.push(`qty ${d.quantityAvailable}`);
+  if (d.description) bits.push(`${d.description.length} chars desc`);
   if (d.opportunityScore !== null && d.opportunityScore !== undefined) bits.push(`opp ${d.opportunityScore}`);
+  const missing = missingDetailFields(d);
+  if (missing.length) bits.push(`no ${missing.join('/')}`);
   return bits.length ? bits.join(', ') : 'detail captured';
+}
+
+/**
+ * The deep-scrape fields users actually ask about. When a selector rots, these
+ * come back null and the run still "succeeds" — so they are named in the log and
+ * summarised at the end of the phase rather than being discovered in the export.
+ */
+const KEY_DETAIL_FIELDS = [
+  ['description', 'description'],
+  ['favoritesCount', 'favourites'],
+  ['shopTotalSales', 'shop sales'],
+  ['tags', 'tags'],
+  ['quantityAvailable', 'stock'],
+];
+
+function missingDetailFields(detail) {
+  const missing = [];
+  for (const [field, label] of KEY_DETAIL_FIELDS) {
+    const value = detail ? detail[field] : null;
+    const empty = value === null || value === undefined || value === ''
+      || (Array.isArray(value) && value.length === 0);
+    if (empty) missing.push(label);
+  }
+  return missing;
+}
+
+/** Warn once per run, with the reason and where to fix it. */
+async function reportDetailCoverage(tally, captured, engineUsed) {
+  if (!captured) return;
+  const gaps = Object.entries(tally).filter(([, count]) => count > 0);
+  if (!gaps.length) return;
+
+  const worst = gaps.sort((a, b) => b[1] - a[1]);
+  const summary = worst.map(([label, count]) => `${label} (${count}/${captured})`).join(', ');
+  const allMissing = worst.some(([, count]) => count === captured);
+
+  await store.log('warn', `Deep scrape gaps — empty for: ${summary}`);
+  if (allMissing && engineUsed === ENGINES.FETCH) {
+    await store.log('warn',
+      'A field empty on every listing usually means the page was not fully rendered: '
+      + 'try the tab engine, which runs the listing page\'s JavaScript.');
+  } else if (allMissing) {
+    await store.log('warn',
+      'A field empty on every listing usually means Etsy renamed its markup: update the '
+      + 'SELECTORS table at the top of src/common/detail-parse.js (JSON-LD fields keep working meanwhile).');
+  }
 }
 
 async function runFetchAttempt(ctx, url, context) {
@@ -671,4 +729,6 @@ export async function scrapeActiveTab() {
   return { rows: stored, duplicates, total: (await store.getRows()).length };
 }
 
-export const __testing = { Scheduler, Dedupe, applyRowFilters, LIMITS };
+export const __testing = {
+  Scheduler, Dedupe, applyRowFilters, missingDetailFields, describeDetail, LIMITS,
+};

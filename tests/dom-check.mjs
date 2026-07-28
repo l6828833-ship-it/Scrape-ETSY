@@ -400,6 +400,41 @@ try {
       assert.equal(results.bothPresent, true, 'a real line still wins over a promo line');
     });
 
+    await test('description survives Etsy renaming its markup', async () => {
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const read = (body, head) => {
+          const doc = new DOMParser().parseFromString(
+            '<html><head>' + (head || '') + '</head><body>' + body + '</body></html>', 'text/html');
+          return EtsyDetail.readDescription(doc);
+        };
+        return JSON.stringify({
+          // The current container.
+          primary: read('<div data-product-details-description-text-content>Full listing text here.</div>'),
+          // Every known selector renamed: must fall back to the meta tags.
+          renamed: read('<div class="brand-new-2027-class">Full listing text here.</div>',
+            '<meta property="og:description" content="Meta fallback description">'),
+          // Collapsed teaser plus the full text: longest must win.
+          collapsed: read('<div data-id="description-text">Short teaser…</div>'
+            + '<div id="listing-page-description">The complete description with much more detail.</div>'),
+          // Container present but holding only the toggle label.
+          chromeOnly: read('<div data-id="description-text">Read more</div>'),
+          nothing: read('<div>unrelated</div>')
+        });
+      })()`));
+      assert.equal(out.primary, 'Full listing text here.');
+      assert.equal(out.renamed, 'Meta fallback description',
+        'og:description must rescue a markup rename');
+      assert.equal(out.collapsed, 'The complete description with much more detail.',
+        'the teaser must not win over the full text');
+      assert.equal(out.chromeOnly, null, '"Read more" is not a description');
+      assert.equal(out.nothing, null);
+    });
+
+    await test('the fixture description is the full text, not the JSON-LD summary', () => {
+      assert.match(d.description, /Instant download 2026 wall calendar/);
+      assert.ok(d.description.length > 40, `suspiciously short: ${d.description}`);
+    });
+
     await test('reads shop age only as a plausible year', async () => {
       const years = JSON.parse(await session.evaluate(`JSON.stringify({
         onEtsy: EtsyDetail.readMemberSince(null, 'On Etsy since 2019'),
