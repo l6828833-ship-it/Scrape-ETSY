@@ -80,6 +80,9 @@ factor makes possible.
 | `sortOrder` | enum | `most_relevant` | `most_relevant`, `price_asc`, `price_desc`, `date_desc` |
 | `minPrice` / `maxPrice` | number | none | Emitted as both `min`/`max` and `min_price`/`max_price` |
 | `shipTo` | string | none | ISO-3166 alpha-2, e.g. `US` → `ship_to=US` |
+| `bestsellerOnly` | bool | `false` | Adds `is_best_seller=true` — only badged bestsellers |
+| `freeShippingOnly` | bool | `false` | Adds `free_shipping=true` |
+| `excludeSponsored` | bool | `false` | Discards "Ad by Etsy seller" placements instead of storing them |
 | `engine` | enum | `hybrid` | `fetch`, `tab`, `hybrid` |
 | `minDelayMs` / `maxDelayMs` | int | `1000` / `3000` | Random politeness delay between requests |
 | `stopOnEmptyPage` | bool | `true` | Stop paginating a keyword once a page yields nothing |
@@ -90,6 +93,34 @@ factor makes possible.
 
 Everything is validated and clamped in the worker, so a hand-crafted message
 cannot push the extension past these limits.
+
+### Bestsellers only, and skipping ads
+
+Both are checkboxes directly under the search fields.
+
+**Bestsellers only** appends Etsy's own facet, so the filtering happens
+server-side and your page budget is spent entirely on bestsellers:
+
+```
+https://www.etsy.com/search?q=2026+calendar+printable&is_best_seller=true&explicit=1&ref=search_bar
+```
+
+`explicit=1` is added automatically whenever any facet is active — Etsy pairs it
+with narrowed searches and silently drops some facets without it. (The
+`as_prefix` param in a URL copied from the browser is just autocomplete
+telemetry; it has no effect on results, so we omit it.)
+
+Rows are deliberately **not** re-filtered locally on the `bestseller` flag: the
+facet already guarantees the result set, and badge detection in the DOM is
+best-effort, so a local filter would silently drop valid rows whose badge we
+failed to see.
+
+**Skip ads** drops rows where `sponsored === true` before de-duplication and
+storage, and counts them in the **Ads skipped** stat so you can see how much of
+each page was advertising. Ads are filtered *after* the empty-page check, so a
+page made up entirely of ads yields zero rows without being mistaken for the end
+of the results. Because ad detection is heuristic, an unlabelled ad can still
+slip through — pair it with the `sponsored` column if you need certainty.
 
 ### Proxy caveat
 
@@ -171,15 +202,15 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 73 checks, no network and no npm install
+bash tools/run-checks.sh          # 91 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (38) | URL building, price/currency/URL normalisation, JSON-LD extraction, merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, CSV/JSON/JSONL/XLSX serialisation |
+| `tests/verify.mjs` (46) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction, merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, CSV/JSON/JSONL/XLSX serialisation |
 | `tools/check-xlsx.py` (8) | Opens the generated workbook with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter |
 | `tests/dom-check.mjs` (12) | The DOM card parser and the injected content script running in **real headless Chrome** against fixtures: all cards found, sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset` selection, JSON-LD↔DOM merge, challenge detection |
-| `tests/extension-check.mjs` (23) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, GET/SAVE_SETTINGS + GET_STATE + SCRAPE_ACTIVE_TAB + CLEAR_RESULTS round-trips, input validation, offscreen document parsing, and a full run driven to completion |
+| `tests/extension-check.mjs` (25) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, GET/SAVE_SETTINGS + GET_STATE + SCRAPE_ACTIVE_TAB + CLEAR_RESULTS round-trips, input validation, filter checkboxes persisting through the worker, offscreen document parsing, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy
 markup is redistributed. The only leg not covered offline is the HTTP request to

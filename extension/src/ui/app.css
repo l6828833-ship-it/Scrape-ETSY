@@ -162,6 +162,23 @@ input:focus, select:focus, textarea:focus {
 
 .hint { font-size: 11px; color: var(--text-dim); }
 
+.filters {
+  margin: 2px 0 8px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.filters .check:first-child { margin-top: 0; }
+.filters .check:last-child { margin-bottom: 0; }
+.filters code {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-inset);
+  padding: 0 3px;
+  border-radius: 3px;
+}
+
 .advanced { margin: 4px 0 10px; }
 .advanced summary {
   cursor: pointer;
