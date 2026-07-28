@@ -683,7 +683,15 @@
     fillIfEmpty(merged, 'favoritesCount', panel.ehuntTotalFavorites);
     fillIfEmpty(merged, 'viewsCount', panel.ehuntTotalViews);
     fillIfEmpty(merged, 'shopTotalSales', panel.ehuntShopSales);
-    fillIfEmpty(merged, 'listingCreationDate', panel.ehuntReleaseDate);
+    // EHunt's "Release Time" *outranks* Etsy's "Listed on", rather than only
+    // filling a gap. Etsy resets "Listed on" on every auto-renewal, so it reads
+    // as a few days old on listings that are years old; EHunt reports when the
+    // listing first appeared. Anything deriving an age from this needs the real
+    // one, so the better source wins and records that it did.
+    if (panel.ehuntReleaseDate) {
+      merged.listingCreationDate = panel.ehuntReleaseDate;
+      merged.listingCreationDateSource = 'ehunt';
+    }
     fillIfEmpty(merged, 'categoryPath', panel.ehuntCategory);
     fillIfEmpty(merged, 'reviewCount', panel.ehuntTotalReviews);
     // Deliberately NOT gap-filled, each for its own reason:

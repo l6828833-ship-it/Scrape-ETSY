@@ -1313,13 +1313,36 @@ await test('skips back to the newest usable snapshot', () => {
   assert.equal(m.favoritesDelta, 31, 'compares against T0, not the 1-minute-old snapshot');
 });
 
-await test('lifetime rate uses the listing age when known', () => {
+await test('lifetime rate uses the listing age when the age is real', () => {
   const m = metrics.summarizeHistory([{ ts: T0, favorites: 300 }], {
     listedAt: '2026-04-01',
+    listedAtIsOriginal: true,
     now: T0,
   });
   assert.equal(m.daysSinceListed, 30);
   assert.equal(m.favoritesPerDayLifetime, 10);
+});
+
+await test('a renewal date is never treated as the listing age', () => {
+  // Etsy resets "Listed on" on auto-renewal. A real run therefore reported
+  // two-day-old listings that had 205 reviews, and dividing a lifetime of
+  // favourites by two days gave 2,306 favourites per day — which then fed the
+  // demand score.
+  const m = metrics.summarizeHistory([{ ts: T0, favorites: 4613 }], {
+    listedAt: '2026-04-29', // Etsy's renewal-reset line, i.e. a couple of days ago
+    now: T0,
+  });
+  assert.equal(m.daysSinceListed, 2, 'still reported, because Etsy did say it');
+  assert.equal(m.favoritesPerDayLifetime, null,
+    'but not turned into a rate, because it is not an age');
+});
+
+await test('an unflagged date still yields a rate from the watched window', () => {
+  const m = metrics.summarizeHistory([
+    { ts: T0 - 4 * DAY, favorites: 100 },
+    { ts: T0, favorites: 140 },
+  ], { listedAt: '2026-04-29', now: T0 });
+  assert.equal(m.favoritesPerDayLifetime, 35, '140 favourites over 4 observed days');
 });
 
 await test('missing favourite counts do not fabricate deltas', () => {

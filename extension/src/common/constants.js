@@ -148,7 +148,7 @@ export const DETAIL_FIELDS = [
   // core
   'listingId', 'url', 'title', 'description', 'price', 'currency',
   'originalPrice', 'onSale', 'availability', 'mainImage', 'imageCount',
-  'categoryPath', 'listingCreationDate',
+  'categoryPath', 'listingCreationDate', 'listingCreationDateSource',
   // sales velocity
   'favoritesCount', 'cartCount', 'viewsCount', 'quantityAvailable',
   // monetisation structure

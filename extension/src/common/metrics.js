@@ -121,9 +121,18 @@ export function summarizeHistory(snapshots, options = {}) {
     }
   }
 
-  // Lifetime rate: total favourites over the listing's age (preferred) or over
-  // the window we have been watching it.
-  const span = out.daysSinceListed || (tracked >= 1 ? tracked : null);
+  // Lifetime rate: total favourites over the listing's age.
+  //
+  // Only when the date we have is genuinely the listing's *creation* date. Etsy's
+  // "Listed on" line is reset by auto-renewal, so on a real run it read
+  // "yesterday" for four-year-old listings — and dividing a lifetime's worth of
+  // favourites by two days produced 2,306 favourites per day. A number like that
+  // is not a slightly-off estimate, it is fiction, and it fed the demand score.
+  //
+  // Without a trustworthy creation date the observation window is used instead,
+  // and if that is under a day there is nothing honest to report.
+  const ageIsReal = options.listedAtIsOriginal === true;
+  const span = (ageIsReal ? out.daysSinceListed : null) || (tracked >= 1 ? tracked : null);
   if (span && isNum(last.favorites)) {
     out.favoritesPerDayLifetime = round(Number(last.favorites) / span);
   }
@@ -207,6 +216,10 @@ function pct(value) {
 export function applyMetrics(detail, snapshots, options = {}) {
   const history = summarizeHistory(snapshots, {
     listedAt: detail && detail.listingCreationDate,
+    // Only a source that reports the *original* listing date can be turned into
+    // an age. Etsy's renewal-reset "Listed on" cannot.
+    listedAtIsOriginal: Boolean(detail
+      && ['ehunt', 'api'].includes(detail.listingCreationDateSource)),
     now: options.now,
   });
   const scores = computeScores({
