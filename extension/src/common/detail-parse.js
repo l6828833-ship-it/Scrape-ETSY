@@ -757,6 +757,10 @@
 
       tags: pick(dom.tags),
       tagCount: pick(dom.tagCount),
+      // Provenance for the tag list. Scraping can only ever produce the
+      // link-derived proxy; the Etsy API layer upgrades this to 'api' when it
+      // supplies the real tag array. Never left implicit.
+      tagSource: dom.tags && dom.tags.length ? 'page-links' : null,
 
       freeShipping: Boolean(dom.freeShipping),
 

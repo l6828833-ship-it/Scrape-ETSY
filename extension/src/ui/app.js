@@ -33,6 +33,7 @@ const FIELD_BINDINGS = [
   ['maxReviewsPerListing', 'maxReviewsPerListing', 'int'],
   ['scrapeReviews', 'scrapeReviews', 'bool'],
   ['trackHistory', 'trackHistory', 'bool'],
+  ['etsyApiKey', 'etsyApiKey', 'text'],
   ['stopOnEmptyPage', 'stopOnEmptyPage', 'bool'],
   ['manualCaptchaSolve', 'manualCaptchaSolve', 'bool'],
   ['keepTabsOpen', 'keepTabsOpen', 'bool'],
@@ -65,6 +66,8 @@ const PREVIEW_COLUMNS = {
     ['Flags', 'flags', (r) => r],
     ['Gap', 'num', (r) => fmtOrDash(r.competitiveGapScore)],
     ['Opp', 'num', (r) => fmtOrDash(r.opportunityScore)],
+    ['Tags', 'num', (r) => (r.tags && r.tags.length
+      ? `${r.tags.length}${r.tagSource === 'api' ? ' API' : '~'}` : '—')],
     ['Tracked', 'num', (r) => (r.snapshotCount ? `${r.snapshotCount}x` : '—')],
   ],
   [DATASETS.reviews]: [
@@ -388,6 +391,14 @@ async function onStart() {
     toast('Add at least one search keyword', true);
     el('queries').focus();
     return;
+  }
+  // api.etsy.com is an optional host permission, requested only once a key is set.
+  if (settings.etsyApiKey && settings.scrapeDetails) {
+    const grantedApi = await chrome.permissions.request({ origins: ['https://api.etsy.com/*'] });
+    if (!grantedApi) {
+      toast('Access to api.etsy.com denied — tags will use the page-link proxy', true);
+      settings.etsyApiKey = '';
+    }
   }
   if (settings.proxyConfiguration.enabled) {
     const granted = await chrome.permissions.request({
