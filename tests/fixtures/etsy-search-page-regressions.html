@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<!--
+  Regression fixture reproducing four data-quality bugs seen in a real run of
+  "2026 calendar printable" (digital downloads, so prices are small decimals).
+
+  Card 9001 — the price/rating collision. Etsy styles the price with the same
+    `.wt-text-title-01` class the parser used as a last-resort rating source, so
+    a $2.59 PDF was reported as "rating 2.59". Every listing under $5 was
+    affected; everything over $5 reported null. Expected now: rating null.
+
+  Card 9002 — shop-name prefixes. Live cards read "Designed by X" / "By X" /
+    "Made by X". Expected now: the bare shop name.
+
+  Card 9003 — shop-level review count. A parenthesised number elsewhere in the
+    card is not this listing's review count; several listings from one shop all
+    reported the same figure. Expected now: null when no stars are present.
+
+  Card 9004 — badge false positives. Incidental copy ("Bestselling shop", a
+    shop-wide "Free shipping on orders over $35" promo) marked most listings as
+    bestsellers with free shipping. Expected now: both false.
+
+  Card 9005 — the control: a genuine rating, review count and badges, which must
+    still be extracted.
+
+  Hand-written from the documented public structure; no Etsy markup copied.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>2026 calendar printable - Etsy</title>
+  </head>
+  <body>
+    <div data-search-results-container>
+      <ol class="responsive-listing-grid">
+        <li>
+          <div class="v2-listing-card" data-listing-id="9001">
+            <a class="listing-link" href="/listing/9001/2026-minimalist-monthly-calendar">
+              <h3 class="v2-listing-card__title">2026 Minimalist Monthly Calendar Printable</h3>
+              <div class="n-listing-card__price">
+                <span class="currency-symbol">$</span><span class="currency-value">2.59</span>
+              </div>
+              <!-- The price is ALSO rendered with the title-01 class. -->
+              <span class="wt-text-title-01">$2.59</span>
+              <p class="wt-text-caption"><span class="wt-text-caption">Designed by TheProductiveCompany</span></p>
+            </a>
+          </div>
+        </li>
+
+        <li>
+          <div class="v2-listing-card" data-listing-id="9002">
+            <a class="listing-link" href="/listing/9002/retro-wall-calendar">
+              <h3 class="v2-listing-card__title">Retro 2026 Monthly Wall Calendar</h3>
+              <div class="n-listing-card__price">
+                <span class="currency-symbol">$</span><span class="currency-value">28.30</span>
+              </div>
+              <p class="wt-text-caption"><span class="wt-text-caption">By JolieDaily</span></p>
+            </a>
+          </div>
+        </li>
+
+        <li>
+          <div class="v2-listing-card" data-listing-id="9003">
+            <a class="listing-link" href="/listing/9003/editable-kids-calendar">
+              <h3 class="v2-listing-card__title">Editable Calendar 2026 for Kids</h3>
+              <div class="n-listing-card__price">
+                <span class="currency-symbol">$</span><span class="currency-value">2.32</span>
+              </div>
+              <p class="wt-text-caption"><span class="wt-text-caption">Made by GroundedGrowStudio</span></p>
+              <!-- Shop-wide total, with no stars anywhere in this card. -->
+              <p class="wt-text-body-smaller">(144)</p>
+            </a>
+          </div>
+        </li>
+
+        <li>
+          <div class="v2-listing-card" data-listing-id="9004">
+            <a class="listing-link" href="/listing/9004/2026-printable-planner">
+              <h3 class="v2-listing-card__title">2026 Printable Planner Bundle</h3>
+              <div class="n-listing-card__price">
+                <span class="currency-symbol">$</span><span class="currency-value">4.32</span>
+              </div>
+              <p class="wt-text-caption"><span class="wt-text-caption">Designed by DotDotDesignHub</span></p>
+              <p class="wt-text-caption">Bestselling shop with thousands of happy customers</p>
+              <p class="wt-text-caption">Free shipping on orders over $35</p>
+            </a>
+          </div>
+        </li>
+
+        <li>
+          <div class="v2-listing-card" data-listing-id="9005">
+            <a class="listing-link" href="/listing/9005/watercolor-calendar">
+              <h3 class="v2-listing-card__title">2026 Watercolor Monthly Calendar</h3>
+              <div class="n-listing-card__price">
+                <span class="currency-symbol">$</span><span class="currency-value">4.24</span>
+              </div>
+              <p class="wt-text-caption"><span class="wt-text-caption">Designed by LoveLaurenJoy</span></p>
+              <div class="wt-display-flex-xs wt-align-items-center">
+                <span class="wt-text-title-01" aria-hidden="true">4.9</span>
+                <input type="hidden" name="rating" value="4.9" />
+                <span class="wt-screen-reader-only">4.9 out of 5 stars</span>
+                <p class="wt-text-body-smaller">(103)</p>
+              </div>
+              <span class="wt-badge">Bestseller</span>
+              <p class="wt-text-caption">FREE shipping</p>
+            </a>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </body>
+</html>

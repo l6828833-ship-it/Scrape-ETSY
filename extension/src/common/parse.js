@@ -60,7 +60,9 @@
     ],
     image: ['img.wt-position-absolute', 'img.wt-width-full', 'img[src*="etsystatic"]', 'img'],
     ratingInput: ['input[name="rating"]'],
-    ratingText: ['.wt-display-flex-xs .wt-text-title-01', 'span.wt-text-title-01'],
+    // Deliberately no generic "number that looks like a rating" selector: on the
+    // live grid `.wt-text-title-01` is the price. See readRating().
+    ratingLabel: ['[aria-label*="out of 5"]', '[title*="out of 5"]'],
     reviewCount: ['.wt-text-body-smaller', 'p.wt-text-body-smaller', 'span.wt-text-body-smaller'],
   };
 
@@ -399,26 +401,18 @@
       ? (shopEl.getAttribute && shopEl.getAttribute('data-shop-name')) || text(shopEl)
       : null;
 
-    let rating = null;
-    const ratingInput = firstMatch(el, SELECTORS.ratingInput);
-    if (ratingInput) rating = parsePrice(ratingInput.getAttribute('value'));
-    if (rating === null) {
-      const srm = text(el).match(/([0-5](?:[.,]\d)?)\s*out of 5 stars/i);
-      if (srm) rating = parsePrice(srm[1]);
-    }
-    if (rating === null) {
-      const rEl = firstMatch(el, SELECTORS.ratingText);
-      const val = parsePrice(text(rEl));
-      if (val !== null && val >= 0 && val <= 5) rating = val;
-    }
-
-    let reviewCount = null;
-    const revMatch = text(el).match(/\((\d[\d.,\s]*)\)/);
-    if (revMatch) reviewCount = toNumber(revMatch[1]);
-    if (reviewCount === null) {
-      const rc = text(el).match(/([\d.,]+)\s*(?:reviews?|ratings?)/i);
-      if (rc) reviewCount = toNumber(rc[1]);
-    }
+    // Rating comes ONLY from an element that states it is a rating.
+    //
+    // There used to be a third fallback here that read the first
+    // `.wt-text-title-01` in the card and accepted any value in 0-5. On the live
+    // grid that class is the *price*, so every listing under $5 silently
+    // reported its price as its star rating (a $2.59 PDF "rated 2.59"), while
+    // anything over $5 reported null. Prices and ratings are both small decimals
+    // in this category, so no amount of range checking can tell them apart —
+    // the only safe rule is to require an explicit rating source and otherwise
+    // return null.
+    const rating = readRating(el);
+    const reviewCount = readReviewCount(el, rating !== null);
 
     return {
       listingId: String(listingId),
@@ -426,16 +420,110 @@
       url: cleanListingUrl(href) || (listingId ? 'https://www.etsy.com/listing/' + listingId : null),
       price: price,
       currency: currency,
-      shopName: shopName || null,
+      shopName: cleanShopName(shopName),
       image: bestImage(firstMatch(el, SELECTORS.image)),
       rating: rating,
       reviewCount: reviewCount,
-      freeShipping: /free shipping|free delivery/.test(blob),
-      bestseller: /bestseller|best seller/.test(blob),
+      freeShipping: hasBadge(el, FREE_SHIPPING_BADGE, CONDITIONAL_SHIPPING),
+      bestseller: hasBadge(el, BESTSELLER_BADGE),
       sponsored: detectSponsored(el, blob),
       position: index + 1,
       _source: 'dom',
     };
+  }
+
+  /** Elements that genuinely declare a star rating, in order of trust. */
+  function readRating(el) {
+    const input = firstMatch(el, SELECTORS.ratingInput);
+    if (input) {
+      const value = clampRating(parsePrice(input.getAttribute('value')));
+      if (value !== null) return value;
+    }
+    // Screen-reader / aria text: "4.8 out of 5 stars".
+    const labelled = allMatches(el, ['[aria-label*="out of 5"]', '[title*="out of 5"]']);
+    for (const node of labelled) {
+      const label = (node.getAttribute('aria-label') || node.getAttribute('title') || '');
+      const m = label.match(/([0-5](?:[.,]\d+)?)\s*out of 5/i);
+      if (m) {
+        const value = clampRating(parsePrice(m[1]));
+        if (value !== null) return value;
+      }
+    }
+    const m = text(el).match(/([0-5](?:[.,]\d+)?)\s*out of 5(?:\s*stars?)?/i);
+    return m ? clampRating(parsePrice(m[1])) : null;
+  }
+
+  function clampRating(value) {
+    if (value === null || !Number.isFinite(value)) return null;
+    return value >= 0 && value <= 5 ? value : null;
+  }
+
+  /**
+   * Review counts live next to the stars. Requiring that context matters: the
+   * same "(1,482)" shape also appears for shop-level totals elsewhere in a card,
+   * which is why several listings from one shop previously reported an identical
+   * review count.
+   * @param {boolean} hasRating only trust a bare "(n)" when stars were found
+   */
+  function readReviewCount(el, hasRating) {
+    const explicit = text(el).match(/([\d.,]+)\s*(?:reviews?|ratings?)\b/i);
+    if (explicit) return toNumber(explicit[1]);
+    if (!hasRating) return null;
+
+    const container = ratingContainer(el);
+    const scope = container || el;
+    // Prefer a short element whose entire text is the count, e.g. "(1,204)".
+    for (const node of allMatches(scope, ['p, span, div'])) {
+      const t = text(node);
+      if (t.length > 12) continue;
+      const m = t.match(/^\((\d[\d.,\s]*)\)$/);
+      if (m) return toNumber(m[1]);
+    }
+    const loose = text(scope).match(/\((\d[\d.,\s]*)\)/);
+    return loose ? toNumber(loose[1]) : null;
+  }
+
+  /** The smallest element that holds the rating, used to scope the count. */
+  function ratingContainer(el) {
+    const anchor = firstMatch(el, SELECTORS.ratingInput)
+      || firstMatch(el, ['[aria-label*="out of 5"]', '[title*="out of 5"]']);
+    if (!anchor) return null;
+    let node = anchor.parentElement;
+    for (let depth = 0; node && depth < 3; depth += 1) {
+      if (/\(\s*\d/.test(text(node))) return node;
+      node = node.parentElement;
+    }
+    return anchor.parentElement || null;
+  }
+
+  const FREE_SHIPPING_BADGE = /^free\s+(?:standard\s+)?(?:shipping|delivery)\b/i;
+  /** "Free shipping on orders over $35" is a shop promotion, not this listing. */
+  const CONDITIONAL_SHIPPING = /orders? over|when you spend|on orders of/i;
+  const BESTSELLER_BADGE = /^best\s?seller\b/i;
+
+  /**
+   * Badges are their own short elements. Testing the whole card's text instead
+   * matches any incidental copy ("Bestselling shop", a shop-wide shipping
+   * promotion), which marked most listings as bestsellers in real runs.
+   */
+  function hasBadge(el, pattern, excludePattern) {
+    for (const node of allMatches(el, ['span, p, div, li'])) {
+      const t = text(node);
+      if (!t || t.length > 40) continue;
+      if (!pattern.test(t)) continue;
+      if (excludePattern && excludePattern.test(t)) continue;
+      return true;
+    }
+    return false;
+  }
+
+  const SHOP_PREFIX = /^(?:designed\s+by|made\s+by|sold\s+by|from\s+shop|shop\s+by|ad\s+by\s+etsy\s+seller|ad\s+by|by)\s+/i;
+
+  /** Etsy prefixes the seller with "Designed by" / "By" / "Made by". */
+  function cleanShopName(name) {
+    if (!name) return null;
+    const cleaned = String(name).replace(/\s+/g, ' ').trim().replace(SHOP_PREFIX, '').trim();
+    return cleaned || null;
   }
 
   function pickShopElement(el) {
@@ -623,5 +711,10 @@
     listingIdFromUrl,
     cleanListingUrl,
     finalize,
+    readRating,
+    readReviewCount,
+    cleanShopName,
+    hasBadge,
+    parseCard,
   };
 });
