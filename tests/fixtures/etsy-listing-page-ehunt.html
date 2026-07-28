@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<!--
+  A listing page with the EHunt (Etsy Rank Tool) panel rendered into it, modelled
+  on the panel's observed structure: a label/value stats table plus
+  `.eh-exe-tags-list-item` entries holding a tag name and its search volume.
+
+  EHunt is a separate extension that injects into the same DOM, which is why our
+  content script can read it. Covered here:
+    * the real 13 tags with volumes ("14.8M", "656.9K")
+    * Product Type: Digital  -> isDigital true
+    * Total Views "N/A"      -> must stay null, not 0
+    * EHunt's own estimates  -> stored under ehunt* names, never as Etsy facts
+    * a physical variant is asserted separately in tests
+
+  Third-party markup, hand-written for testing; nothing copied from EHunt.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Editable August 2026 Calendar PDF - Etsy</title>
+    <meta property="og:description" content="Editable August 2026 calendar, instant download." />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "Editable August 2026 Calendar, PDF Editable, Summer Printable Planner",
+        "url": "https://www.etsy.com/listing/4451164796/editable-august-2026-calendar-pdf",
+        "sku": "4451164796",
+        "offers": {
+          "@type": "Offer",
+          "price": "0.91",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1 data-buy-box-listing-title>
+        Editable August 2026 Calendar, PDF Editable, Summer Printable Planner
+      </h1>
+      <div data-buy-box-region="price">
+        <span class="currency-symbol">$</span><span class="currency-value">0.91</span>
+      </div>
+
+      <div class="listing-highlights">
+        <p>Designed by LemonOrchardStudio</p>
+        <p>Digital download</p>
+        <p>Digital file type(s): 2 JPG, 2 PDF</p>
+      </div>
+
+      <section class="delivery">
+        <h2>Instant Download</h2>
+        <p>Your files will be available to download once payment is confirmed.</p>
+      </section>
+
+      <div data-product-details-description-text-content>
+        Our 2026 August Calendar is both cute and practical, featuring a cheerful summer
+        theme for organization. This editable and printable calendar is the quick, easy and
+        stylish solution you need to plan your month and track your goals.
+      </div>
+
+      <!-- ============ EHunt - Etsy Rank Tool panel (injected) ============ -->
+      <div class="eh-exe-panel">
+        <h3>EHunt - Etsy Rank Tool</h3>
+        <table class="eh-exe-table">
+          <tbody>
+            <tr>
+              <td>Release Time</td><td>2026-02-02</td>
+              <td>Total Sales</td><td>68</td>
+              <td>Total Revenue</td><td>51</td>
+            </tr>
+            <tr>
+              <td>Total Views</td><td>N/A</td>
+              <td>Total Reviews</td><td>7</td>
+              <td>Total Favorites</td><td>11</td>
+            </tr>
+            <tr>
+              <td>Avg.Conv.Rate</td><td>N/A</td>
+              <td>Review Ratio</td><td>10.29%</td>
+              <td>Price</td><td>USD Price:0.91</td>
+            </tr>
+            <tr>
+              <td>Product Type</td><td>Digital</td>
+              <td>Ships From</td><td>United States</td>
+              <td>Other Data</td><td>BestSeller Stocks 87</td>
+            </tr>
+            <tr>
+              <td>Category</td>
+              <td>Paper &amp; Party Supplies &gt; Paper &gt; Stationery &gt; Design &amp; Templates &gt; Templates &gt; Planner Templates</td>
+            </tr>
+            <tr>
+              <td>Store Name</td><td>LemonOrchardStudio</td>
+              <td>Store Sales</td><td>775</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div style="display: flex;">
+          <div style="line-height: 36px; flex-shrink: 0;">Tags :</div>
+          <div class="eh-exe-tags-list">
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Editable PDF Planner</div>
+              <div class="eh-exe-tags-list-item-value"> (14.8M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Printable Planner</div>
+              <div class="eh-exe-tags-list-item-value"> (18.7M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">PDF Download</div>
+              <div class="eh-exe-tags-list-item-value"> (14.7M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Productivity Planner</div>
+              <div class="eh-exe-tags-list-item-value"> (9.9M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Cute Kids Calendar</div>
+              <div class="eh-exe-tags-list-item-value"> (6.9M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">2026 Digital Planner</div>
+              <div class="eh-exe-tags-list-item-value"> (33.4M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Activities Calendar</div>
+              <div class="eh-exe-tags-list-item-value"> (656.9K) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Organization Planner</div>
+              <div class="eh-exe-tags-list-item-value"> (5.3M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">2026 Printable</div>
+              <div class="eh-exe-tags-list-item-value"> (5.1M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Home Schooling</div>
+              <div class="eh-exe-tags-list-item-value"> (1.3M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Summer August</div>
+              <div class="eh-exe-tags-list-item-value"> (226.0K) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">2026 August Month</div>
+              <div class="eh-exe-tags-list-item-value"> (5.0M) </div>
+            </div></div>
+            <div class="eh-exe-tags-list-item"><div>
+              <div class="el-tooltip__trigger">Teacher Planner</div>
+              <div class="eh-exe-tags-list-item-value"> (6.8M) </div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

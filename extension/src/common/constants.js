@@ -57,6 +57,10 @@ export const DEFAULTS = {
   freeShippingOnly: false,
   /** Drop "Ad by Etsy seller" placements instead of storing them. */
   excludeSponsored: false,
+  /** Keep only instant/digital downloads (labelled "Digital Download"). */
+  digitalOnly: false,
+  /** Read tags and estimates from the EHunt panel when it is on the page. */
+  useEhuntPanel: true,
   /** Phase 2: open each collected listing and extract the deep dataset. */
   scrapeDetails: false,
   /** Cap on listings enriched per run (each one is an extra page request). */
@@ -116,6 +120,8 @@ export const FIELDS = [
   'freeShipping',
   'bestseller',
   'sponsored',
+  /** true when the card carries Etsy's "Digital Download" label; null if not stated. */
+  'isDigital',
   'scrapedAt',
 ];
 
@@ -138,7 +144,14 @@ export const DETAIL_FIELDS = [
   'materials',
   // SEO — tagSource records whether these are the real API tags or the
   // link-derived proxy, so a partial harvest is never mistaken for the full set.
-  'tags', 'tagCount', 'tagSource',
+  'tags', 'tagCount', 'tagSource', 'tagVolumes',
+  // Third-party estimates read from the EHunt panel when it is on the page.
+  // Prefixed so they are never mistaken for figures Etsy published.
+  'ehuntEstimatedSales', 'ehuntEstimatedRevenue', 'ehuntConversionRate',
+  'ehuntReviewRatio', 'ehuntPanel',
+  // product type: true = instant/digital download, false = physical,
+  // null = the page never said (never guessed from price or category)
+  'isDigital', 'productType',
   // shipping incentive
   'freeShipping',
   // seller authority

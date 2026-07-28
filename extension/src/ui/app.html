@@ -77,6 +77,11 @@
             <span><strong>Skip ads</strong> — discard "Ad by Etsy seller" placements</span>
           </label>
           <label class="check">
+            <input id="digitalOnly" type="checkbox" />
+            <span><strong>Digital products only</strong> — keep instant/digital downloads,
+              drop physical items</span>
+          </label>
+          <label class="check">
             <input id="freeShippingOnly" type="checkbox" />
             <span>Free shipping only</span>
           </label>
@@ -111,6 +116,13 @@
             <input id="trackHistory" type="checkbox" />
             <span>Keep snapshots to derive growth velocity
               (<code>favoritesDelta</code>, <code>favoritesPerDay</code>)</span>
+          </label>
+
+          <label class="check">
+            <input id="useEhuntPanel" type="checkbox" />
+            <span><strong>Read the EHunt panel</strong> — if the EHunt (Etsy Rank Tool)
+              extension is installed, take its 13 tags with search volumes, plus its
+              sales/revenue/conversion estimates. <em>Needs the Tab engine.</em></span>
           </label>
 
           <fieldset class="proxy">
@@ -240,6 +252,7 @@
           <div><dt>Queries</dt><dd id="statQueries">0 / 0</dd></div>
           <div><dt>Dupes</dt><dd id="statDupes">0</dd></div>
           <div><dt>Ads skipped</dt><dd id="statAds">0</dd></div>
+          <div><dt>Non-digital</dt><dd id="statNonDigital">0</dd></div>
           <div><dt>Retries</dt><dd id="statRetries">0</dd></div>
           <div><dt>Blocks</dt><dd id="statBlocks">0</dd></div>
           <div><dt>Details</dt><dd id="statDetails">0 / 0</dd></div>

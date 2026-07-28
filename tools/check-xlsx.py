@@ -23,7 +23,7 @@ REQUIRED_PARTS = {
 EXPECTED_HEADERS = [
     "query", "page", "position", "listingId", "title", "price", "currency",
     "shopName", "image", "url", "rating", "reviewCount", "freeShipping",
-    "bestseller", "sponsored", "scrapedAt",
+    "bestseller", "sponsored", "isDigital", "scrapedAt",
 ]
 
 ROOT = Path(__file__).resolve().parent.parent

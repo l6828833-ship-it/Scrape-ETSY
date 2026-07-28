@@ -19,6 +19,8 @@ import '../common/detail-parse.js';
 const INJECT_FILES = [
   'src/common/parse.js',
   'src/common/detail-parse.js',
+  // EHunt renders into the page DOM, so it is only readable from a real tab.
+  'src/common/ehunt-parse.js',
   'src/content/extract-detail.js',
 ];
 

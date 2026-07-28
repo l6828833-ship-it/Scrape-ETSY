@@ -230,6 +230,43 @@ redesigns. Where a page renders a collapsed teaser plus the full text, the longe
 one wins.
 
 | `viewsCount` | Etsy removed public view counters years ago. The column exists and stays `null` unless a page genuinely exposes one — it is never inferred from something else. |
+### Digital products only
+
+Tick **Digital products only** to keep instant/digital downloads and drop physical
+items. Etsy has no documented "digital" search facet, so this is a row filter, and
+it is deliberately strict: Etsy *labels* digital listings ("Digital Download") but
+says nothing at all for physical ones, so only an explicit label qualifies and an
+unlabelled row is dropped. Every drop is counted in the **Non-digital** stat, so
+over-filtering shows up immediately instead of quietly shrinking your dataset.
+
+The deep scrape re-checks with much stronger evidence: a listing page states
+"Instant Download" / "Digital file type(s)" for digital, and "Ships from" /
+"Arrives by" for physical. `isDigital` is tri-state — `true`, `false`, or `null`
+when the page never said. **Price is never used as a signal**: cheap physical
+items and expensive digital ones both exist.
+
+### Reading tags from the EHunt panel
+
+If you already run [EHunt (Etsy Rank Tool)](https://ehunt.ai), it renders a
+listing's real 13 tags — with search volumes — into the page. It injects into the
+same DOM, so our content script can read it: tick **Read the EHunt panel** and the
+deep scrape harvests
+
+- `tags` (all 13) plus `tagVolumes` (`{"Editable PDF Planner": 14800000}`)
+- `isDigital` from EHunt's own Product Type row
+- EHunt's estimates: `ehuntEstimatedSales`, `ehuntEstimatedRevenue`,
+  `ehuntConversionRate`, `ehuntReviewRatio`
+
+**Requires the Tab engine** — EHunt only injects into a rendered page, so a
+worker `fetch()` of the HTML never contains it.
+
+Precedence is explicit and conservative. `tagSource` reads `api` > `ehunt` >
+`page-links`, and EHunt values only ever *fill gaps* in Etsy-observed fields —
+a favourite count read from Etsy is never overwritten by EHunt's. Its
+sales/revenue/conversion figures keep the `ehunt` prefix because they are
+**third-party estimates, not figures Etsy published**, and `N/A` in the panel
+becomes `null`, never `0`.
+
 ### Getting the real 13 tags
 
 Etsy never renders a listing's tags verbatim in the page, so scraping alone can
@@ -364,14 +401,14 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 164 checks, no network and no npm install
+bash tools/run-checks.sh          # 179 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (84) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tests/verify.mjs` (92) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
-| `tests/dom-check.mjs` (33) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
+| `tests/dom-check.mjs` (40) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy

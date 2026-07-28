@@ -117,9 +117,27 @@ class Dedupe {
  * @returns {{rows:Array<object>, adsSkipped:number}}
  */
 export function applyRowFilters(records, settings) {
-  if (!settings || !settings.excludeSponsored) return { rows: records, adsSkipped: 0 };
-  const rows = records.filter((r) => !r.sponsored);
-  return { rows, adsSkipped: records.length - rows.length };
+  const cfg = settings || {};
+  let rows = records || [];
+  let adsSkipped = 0;
+  let nonDigitalSkipped = 0;
+
+  if (cfg.excludeSponsored) {
+    const kept = rows.filter((r) => !r.sponsored);
+    adsSkipped = rows.length - kept.length;
+    rows = kept;
+  }
+
+  if (cfg.digitalOnly) {
+    // Etsy labels digital listings but stays silent for physical ones, so only
+    // an explicit `true` qualifies. Unlabelled rows are dropped and counted, so
+    // over-filtering is visible in the log instead of silently shrinking a run.
+    const kept = rows.filter((r) => r.isDigital === true);
+    nonDigitalSkipped = rows.length - kept.length;
+    rows = kept;
+  }
+
+  return { rows, adsSkipped, nonDigitalSkipped };
 }
 
 /**
@@ -150,6 +168,7 @@ export async function startRun(rawSettings) {
       rows: 0,
       duplicates: 0,
       adsSkipped: 0,
+      nonDigitalSkipped: 0,
       retries: 0,
       blocks: 0,
     },
@@ -367,7 +386,7 @@ async function processTask(ctx, task, label) {
     // Row-level filters run before de-duplication so the dupe count stays
     // meaningful, and after the empty-page check above so that a page made up
     // entirely of ads is not mistaken for the end of the results.
-    const { rows: filtered, adsSkipped } = applyRowFilters(records, settings);
+    const { rows: filtered, adsSkipped, nonDigitalSkipped } = applyRowFilters(records, settings);
     const { kept, duplicates } = ctx.dedupe.filter(filtered, task.query);
     for (const row of kept) {
       if (row.listingId && !ctx.collected.has(row.listingId)) {
@@ -375,14 +394,17 @@ async function processTask(ctx, task, label) {
       }
     }
     const stored = await store.addRows(kept);
-    await store.bumpProgress({ pagesDone: 1, rows: stored, duplicates, adsSkipped });
+    await store.bumpProgress({
+      pagesDone: 1, rows: stored, duplicates, adsSkipped, nonDigitalSkipped,
+    });
     if (task.page >= settings.maxPagesPerQuery
       && ctx.scheduler.markDone(task.queueIndex, 'page limit')) {
       await store.bumpProgress({ queriesDone: 1 });
     }
     await store.log('success',
       `${label} -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''}`
-      + `${adsSkipped ? ` (${adsSkipped} ads skipped)` : ''} via ${engine}`
+      + `${adsSkipped ? ` (${adsSkipped} ads skipped)` : ''}`
+      + `${nonDigitalSkipped ? ` (${nonDigitalSkipped} non-digital skipped)` : ''} via ${engine}`
       + ` [ld:${outcome.counts.jsonld} dom:${outcome.counts.dom}]`);
     return;
   }
@@ -492,6 +514,7 @@ async function processDetailTask(ctx, target, label) {
       sourceUrl: url,
       scrapeReviews: settings.scrapeReviews,
       maxReviews: settings.maxReviewsPerListing,
+      useEhuntPanel: settings.useEhuntPanel,
       scrapedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
     };
 
@@ -536,6 +559,14 @@ async function processDetailTask(ctx, target, label) {
       lastError = outcome.error || 'no listing data';
       if (!outcome.retryable) break;
       continue;
+    }
+
+    // Digital-only: the listing page states this positively, so this is a much
+    // stronger signal than the search card and worth re-checking here.
+    if (settings.digitalOnly && outcome.record.isDigital === false) {
+      await store.bumpProgress({ detailsDone: 1, nonDigitalSkipped: 1 });
+      await store.log('info', `${label} skipped — physical product (digital-only is on).`);
+      return;
     }
 
     // Optional API pass: the only source for the real 13 tags. Runs before the
@@ -619,7 +650,12 @@ function describeDetail(d) {
   if (d.quantityAvailable !== null && d.quantityAvailable !== undefined) bits.push(`qty ${d.quantityAvailable}`);
   if (d.description) bits.push(`${d.description.length} chars desc`);
   if (d.tags && d.tags.length) {
-    bits.push(`${d.tags.length} tags${d.tagSource === 'api' ? ' (API)' : ''}`);
+    const source = d.tagSource === 'api' ? ' (API)' : (d.tagSource === 'ehunt' ? ' (EHunt)' : '');
+    bits.push(`${d.tags.length} tags${source}`);
+  }
+  if (d.isDigital === true) bits.push('digital');
+  if (d.ehuntEstimatedSales !== null && d.ehuntEstimatedSales !== undefined) {
+    bits.push(`~${d.ehuntEstimatedSales} sales (EHunt)`);
   }
   if (d.opportunityScore !== null && d.opportunityScore !== undefined) bits.push(`opp ${d.opportunityScore}`);
   const missing = missingDetailFields(d);

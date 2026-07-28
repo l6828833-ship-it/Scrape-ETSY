@@ -33,6 +33,7 @@ function freshState() {
       rows: 0,
       duplicates: 0,
       adsSkipped: 0,
+      nonDigitalSkipped: 0,
       retries: 0,
       blocks: 0,
       detailsPlanned: 0,
@@ -85,7 +86,7 @@ export function normalizeSettings(input) {
   s.positionMode = s.positionMode === 'global' ? 'global' : 'per_page';
   for (const flag of ['bestsellerOnly', 'freeShippingOnly', 'excludeSponsored',
     'stopOnEmptyPage', 'manualCaptchaSolve', 'keepTabsOpen', 'scrapeDetails',
-    'scrapeReviews', 'trackHistory']) {
+    'scrapeReviews', 'trackHistory', 'digitalOnly', 'useEhuntPanel']) {
     s[flag] = Boolean(s[flag]);
   }
   // Stored locally and never logged; keystrings are ~24 chars of [a-z0-9].
