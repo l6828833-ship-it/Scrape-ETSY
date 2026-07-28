@@ -341,21 +341,77 @@ try {
       assert.deepEqual(d.materials, ['Recycled paper', 'Archival ink']);
     });
 
-    await test('extracts the SEO surface', () => {
+    await test('extracts the SEO surface from both link shapes', () => {
       assert.ok(d.tags.includes('2026 calendar'));
       assert.ok(d.tags.includes('printable calendar'));
-      assert.equal(d.tagCount, 4, 'duplicate market links collapse');
-      assert.ok(d.tagCount <= 13);
+      assert.ok(d.tags.includes('wall calendar'), 'search-style tag chips included');
+      assert.ok(d.tags.includes('canva template'));
+      assert.ok(!d.tags.some((t) => /see more/i.test(t)), 'navigation links excluded');
+      assert.equal(d.tagCount, 6, 'duplicates collapse case-insensitively');
+      assert.ok(d.tagCount <= 13, 'never exceeds Etsy\'s own tag limit');
     });
 
-    await test('extracts seller authority', () => {
+    await test('caps tags at 13 however many links exist', async () => {
+      const capped = await session.evaluate(`(() => {
+        const html = '<html><body>' + Array.from({length: 30},
+          (_, i) => '<a href="/market/tag' + i + '">tag ' + i + '</a>').join('') + '</body></html>';
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        return EtsyDetail.readTags(doc).length;
+      })()`);
+      assert.equal(capped, 13);
+    });
+
+    await test('extracts seller authority incl. shop age', () => {
       assert.equal(d.shopName, 'PaperMoonStudioCo');
       assert.equal(d.shopUrl, 'https://www.etsy.com/shop/PaperMoonStudioCo');
       assert.equal(d.shopTotalSales, 12345);
-      assert.equal(d.starSeller, true);
+      assert.equal(d.isStarSeller, true);
       assert.equal(d.shopLocation, 'Portland, Oregon');
+      assert.equal(d.shopMemberSince, 2019);
       assert.equal(d.rating, 4.9);
       assert.equal(d.reviewCount, 128);
+    });
+
+    await test('detects genuine free shipping', () => {
+      assert.equal(d.freeShipping, true);
+    });
+
+    await test('ignores conditional shop-wide free-shipping promotions', async () => {
+      const results = JSON.parse(await session.evaluate(`(() => {
+        const check = (body) => {
+          const doc = new DOMParser().parseFromString('<html><body>' + body + '</body></html>', 'text/html');
+          return EtsyDetail.readFreeShipping(doc, doc.body.textContent);
+        };
+        return JSON.stringify({
+          promo: check('<p>Free shipping on orders over $35</p>'),
+          spend: check('<p>Free delivery when you spend $50</p>'),
+          genuine: check('<p>Free shipping to United States</p>'),
+          zeroCost: check('<p>Cost to ship: FREE</p>'),
+          none: check('<p>Shipping: $4.50</p>'),
+          bothPresent: check('<p>Free shipping on orders over $35</p><p>Free shipping to Canada</p>')
+        });
+      })()`));
+      assert.equal(results.promo, false, 'a spend threshold is not per-listing free shipping');
+      assert.equal(results.spend, false);
+      assert.equal(results.genuine, true);
+      assert.equal(results.zeroCost, true);
+      assert.equal(results.none, false);
+      assert.equal(results.bothPresent, true, 'a real line still wins over a promo line');
+    });
+
+    await test('reads shop age only as a plausible year', async () => {
+      const years = JSON.parse(await session.evaluate(`JSON.stringify({
+        onEtsy: EtsyDetail.readMemberSince(null, 'On Etsy since 2019'),
+        seller: EtsyDetail.readMemberSince(null, 'Etsy seller since 2007'),
+        tooEarly: EtsyDetail.readMemberSince(null, 'Established since 1998'),
+        future: EtsyDetail.readMemberSince(null, 'since 2099'),
+        absent: EtsyDetail.readMemberSince(null, 'no dates here')
+      })`));
+      assert.equal(years.onEtsy, 2019);
+      assert.equal(years.seller, 2007);
+      assert.equal(years.tooEarly, null, 'predates Etsy — must be rejected');
+      assert.equal(years.future, null);
+      assert.equal(years.absent, null);
     });
 
     await test('captures reviews with ratings, dates and photos', () => {
