@@ -74,8 +74,10 @@ const PREVIEW_COLUMNS = {
     ['Flags', 'flags', (r) => r],
     ['Gap', 'num', (r) => fmtOrDash(r.competitiveGapScore)],
     ['Opp', 'num', (r) => fmtOrDash(r.opportunityScore)],
-    ['Tags', 'num', (r) => (r.tags && r.tags.length
-      ? `${r.tags.length}${r.tagSource === 'api' ? ' API' : '~'}` : '—')],
+    // The tags themselves, not how many there are. This column used to read
+    // "13~", which is the least useful thing it could say about the field people
+    // open this tool for.
+    ['Tags', 'tags', (r) => r],
     ['Tracked', 'num', (r) => (r.snapshotCount ? `${r.snapshotCount}x` : '—')],
   ],
   [DATASETS.reviews]: [
@@ -274,6 +276,7 @@ function renderPreview(rows, total, dataset) {
       const value = accessor(row);
       if (className === 'link') tr.append(titleCell(value));
       else if (className === 'flags') tr.append(flagsCell(value));
+      else if (className === 'tags') tr.append(tagsCell(value));
       else tr.append(td(value, className));
     }
     frag.append(tr);
@@ -287,6 +290,57 @@ function renderPreview(rows, total, dataset) {
     ? `${shown} This is the search grid; tags, description and favourites are in `
       + '"Listing details".'
     : shown;
+}
+
+/**
+ * The listing's actual tags, one chip each.
+ *
+ * Every tag is rendered rather than a count, because the tags *are* the point of
+ * the deep scrape — a cell reading "13~" tells you nothing you wanted to know.
+ * The search volume EHunt reports rides along in each chip's tooltip, and the
+ * cell's own tooltip holds the full list as one comma-separated line so it can be
+ * read or copied without exporting.
+ *
+ * `tagSource` is shown as a short marker rather than being hidden, because
+ * "these are the literal 13 from Etsy's API" and "these are links that resemble
+ * the tags" deserve different levels of trust.
+ */
+const TAG_SOURCE_LABEL = {
+  api: { mark: 'API', hint: "Etsy's own API — the literal tags on this listing" },
+  ehunt: { mark: 'EHunt', hint: 'Read from the EHunt panel — the real tags, via a third party' },
+  'page-links': { mark: '~', hint: 'Harvested from page links — a close proxy, not the literal tags' },
+};
+
+function tagsCell(row) {
+  const cell = document.createElement('td');
+  cell.className = 'tags';
+  const tags = Array.isArray(row && row.tags) ? row.tags : [];
+  if (!tags.length) {
+    cell.textContent = '—';
+    return cell;
+  }
+
+  const volumes = (row && row.tagVolumes) || {};
+  cell.title = tags.join(', ');
+
+  for (const tag of tags) {
+    const chip = document.createElement('span');
+    chip.className = 'tag';
+    chip.textContent = tag;
+    const volume = volumes[tag];
+    if (typeof volume === 'number') chip.title = `${tag} — ${fmt(volume)} competing listings`;
+    cell.append(chip);
+  }
+
+  const source = TAG_SOURCE_LABEL[row.tagSource];
+  if (source) {
+    const mark = document.createElement('span');
+    mark.className = 'tag-source';
+    mark.textContent = source.mark;
+    mark.title = source.hint;
+    cell.append(mark);
+  }
+  return cell;
 }
 
 function td(value, className) {
@@ -617,3 +671,10 @@ async function init() {
 }
 
 document.addEventListener('DOMContentLoaded', init);
+
+/**
+ * Cell builders reachable from the test harness, the same way runner.js exposes
+ * `__testing`. Rendering is otherwise only observable through a populated table,
+ * which a fixture run cannot produce.
+ */
+globalThis.__uiTesting = { tagsCell, flagsCell, td };

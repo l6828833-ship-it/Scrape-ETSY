@@ -603,6 +603,53 @@ try {
     assert.equal(state.result.history.listings, 0);
   });
 
+  await test('the Tags column renders the tags, not a count of them', async () => {
+    // It used to read "13~". The tags are the reason the deep scrape exists, so a
+    // count is the least useful thing that cell could contain.
+    const out = JSON.parse(await ui.evaluate(`(() => {
+      const cell = __uiTesting.tagsCell({
+        tags: ['school calendar', 'teacher planner', 'year at a glance'],
+        tagCount: 3,
+        tagSource: 'ehunt',
+        tagVolumes: { 'school calendar': 8400000 }
+      });
+      const chips = [...cell.querySelectorAll('.tag')];
+      return JSON.stringify({
+        chips: chips.map(c => c.textContent),
+        volumeTip: chips[0].title,
+        fullList: cell.title,
+        source: cell.querySelector('.tag-source').textContent,
+        sourceTip: cell.querySelector('.tag-source').title,
+        digitsOnly: /^\\s*\\d+\\D?\\s*$/.test(cell.textContent)
+      });
+    })()`));
+
+    assert.deepEqual(out.chips, ['school calendar', 'teacher planner', 'year at a glance'],
+      'every tag is rendered as its own chip');
+    assert.equal(out.digitsOnly, false, 'the cell is not just a number any more');
+    assert.match(out.volumeTip, /8,400,000 competing listings/, 'EHunt volume rides along');
+    assert.equal(out.fullList, 'school calendar, teacher planner, year at a glance',
+      'the whole list is available as one copyable line');
+    assert.equal(out.source, 'EHunt');
+    assert.match(out.sourceTip, /real tags/, 'the source explains how much to trust them');
+  });
+
+  await test('tags with no source and no tags render honestly', async () => {
+    const out = JSON.parse(await ui.evaluate(`(() => {
+      const empty = __uiTesting.tagsCell({ tags: null });
+      const proxy = __uiTesting.tagsCell({ tags: ['a longer proxy tag'], tagSource: 'page-links' });
+      return JSON.stringify({
+        empty: empty.textContent,
+        proxyMark: proxy.querySelector('.tag-source').textContent,
+        proxyTip: proxy.querySelector('.tag-source').title
+      });
+    })()`));
+    assert.equal(out.empty, '—', 'no tags is a dash, never a zero');
+    assert.equal(out.proxyMark, '~');
+    assert.match(out.proxyTip, /proxy, not the literal tags/,
+      'harvested links must not be presented as the real tag list');
+  });
+
   await test('dataset picker offers every dataset and drives the preview', async () => {
     const raw = await ui.evaluate(`(async () => {
       const select = document.getElementById('dataset');
