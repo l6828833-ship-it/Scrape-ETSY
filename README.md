@@ -220,6 +220,30 @@ One row per listing, exactly as specified:
 }
 ```
 
+### Wrong data is worse than missing data
+
+Several fields on the search grid are only inferable from copy, and a loose guess
+there is actively harmful — a plausible-looking wrong number is harder to notice
+than a `null`. So each of these requires positive evidence and otherwise stays
+`null`/`false`:
+
+- **`rating`** comes only from an element that declares itself a rating (a
+  `rating` input, or `aria-label`/text of the form "4.8 out of 5 stars"). There is
+  no "number that looks like a rating" fallback, because on the live grid Etsy
+  styles the *price* with the same class the stars use. In a real run of
+  `2026 calendar printable` that made every listing under $5 report its price as
+  its star rating (a $2.59 PDF "rated 2.59") while everything over $5 reported
+  `null`. Prices and ratings are both small decimals, so no range check can
+  separate them.
+- **`reviewCount`** must appear next to the stars. A bare `(1,482)` elsewhere in
+  a card is usually a shop-level total, which previously made several listings
+  from one shop share an identical review count.
+- **`bestseller` / `freeShipping`** require a short badge element, not a substring
+  of the card's text. Testing the whole card matched incidental copy like
+  "Bestselling shop" and shop-wide "Free shipping on orders over $35" promotions,
+  which flagged most listings.
+- **`shopName`** strips Etsy's `Designed by` / `By` / `Made by` / `Ad by` prefixes.
+
 Notes on normalisation:
 
 - `price` is a number in the page's own currency: `"$1,249.99"` → `1249.99`,
@@ -271,14 +295,14 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 140 checks, no network and no npm install
+bash tools/run-checks.sh          # 146 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
 | `tests/verify.mjs` (72) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
-| `tests/dom-check.mjs` (21) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge) and listing pages (favourites, cart count, stock, variations, personalisation, materials, tags, shop authority, reviews with photos, review caps), plus challenge detection |
+| `tests/dom-check.mjs` (27) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge) and listing pages (favourites, cart count, stock, variations, personalisation, materials, tags, shop authority, reviews with photos, review caps), plus challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy

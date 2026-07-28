@@ -175,6 +175,7 @@ const detailParseSource = readFileSync(path.join(root, 'extension/src/common/det
 const extractSource = readFileSync(path.join(root, 'extension/src/content/extract.js'), 'utf8');
 const extractDetailSource = readFileSync(path.join(root, 'extension/src/content/extract-detail.js'), 'utf8');
 const searchFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-search-page.html')).href;
+const regressionFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-search-page-regressions.html')).href;
 const listingFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-listing-page.html')).href;
 const challengeFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-challenge-page.html')).href;
 
@@ -406,6 +407,85 @@ try {
       assert.equal(viaContent.reviews.length, 3);
       assert.equal(viaContent.blocked, false);
       assert.ok(viaContent.locationHref.endsWith('etsy-listing-page.html'));
+    });
+
+    session.close();
+    await closePage(targetId);
+  }
+
+  // ------------------------------------- regressions from a real "2026 calendar
+  // printable" run: price leaking into rating, shop-name prefixes, shop-level
+  // review counts, and badge false positives.
+  {
+    const { session, targetId } = await openPage(regressionFixture);
+    await session.evaluate(parseSource);
+
+    const rows = JSON.parse(await session.evaluate(`JSON.stringify(EtsyParse.parsePage({
+      html: document.documentElement.outerHTML, doc: document,
+      context: { query: '2026 calendar printable', page: 1 }
+    }).records)`));
+    const byId = Object.fromEntries(rows.map((r) => [r.listingId, r]));
+
+    await test('price is never reported as a rating', () => {
+      const cheap = byId['9001'];
+      assert.equal(cheap.price, 2.59);
+      assert.equal(cheap.rating, null, 'a $2.59 PDF is not "rated 2.59"');
+      // Guard the whole page: no row may echo its price as its rating.
+      for (const row of rows) {
+        if (row.rating !== null && row.price !== null) {
+          assert.notEqual(row.rating, row.price, `rating echoes price on ${row.listingId}`);
+        }
+      }
+    });
+
+    await test('shop names drop the "Designed by" / "By" / "Made by" prefix', () => {
+      assert.equal(byId['9001'].shopName, 'TheProductiveCompany');
+      assert.equal(byId['9002'].shopName, 'JolieDaily');
+      assert.equal(byId['9003'].shopName, 'GroundedGrowStudio');
+    });
+
+    await test('a shop-level count is not used as the listing review count', () => {
+      assert.equal(byId['9003'].rating, null);
+      assert.equal(byId['9003'].reviewCount, null, '(144) with no stars is the shop total');
+    });
+
+    await test('badges require a badge element, not incidental copy', () => {
+      const promo = byId['9004'];
+      assert.equal(promo.bestseller, false, '"Bestselling shop" is not a Bestseller badge');
+      assert.equal(promo.freeShipping, false, 'a spend-threshold promo is not free shipping');
+    });
+
+    await test('genuine ratings, counts and badges still come through', () => {
+      const good = byId['9005'];
+      assert.equal(good.rating, 4.9);
+      assert.equal(good.reviewCount, 103);
+      assert.equal(good.bestseller, true);
+      assert.equal(good.freeShipping, true);
+      assert.equal(good.shopName, 'LoveLaurenJoy');
+      assert.equal(good.price, 4.24);
+    });
+
+    await test('ratings outside 0-5 are rejected outright', async () => {
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const mk = (body) => {
+          const doc = new DOMParser().parseFromString(
+            '<html><body><div data-listing-id="1"><a class="listing-link" href="/listing/1/x"></a>'
+            + body + '</div></body></html>', 'text/html');
+          return EtsyParse.readRating(doc.querySelector('[data-listing-id]'));
+        };
+        return JSON.stringify({
+          tooHigh: mk('<input name="rating" value="28.30">'),
+          negative: mk('<input name="rating" value="-1">'),
+          valid: mk('<input name="rating" value="4.8">'),
+          ariaOnly: mk('<div aria-label="3.5 out of 5 stars"></div>'),
+          none: mk('<span class="wt-text-title-01">$2.59</span>')
+        });
+      })()`));
+      assert.equal(out.tooHigh, null);
+      assert.equal(out.negative, null);
+      assert.equal(out.valid, 4.8);
+      assert.equal(out.ariaOnly, 3.5);
+      assert.equal(out.none, null, 'a price-styled number is not a rating');
     });
 
     session.close();
