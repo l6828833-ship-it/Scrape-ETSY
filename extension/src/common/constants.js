@@ -201,8 +201,21 @@ export const DATASETS = {
   search: 'search',
   details: 'details',
   reviews: 'reviews',
+  // Observations and the run's own account of itself. Both were recorded and
+  // then unreachable: the snapshot series is what every velocity number is
+  // derived from, and the log holds the per-listing gap reporting.
+  history: 'history',
+  log: 'log',
   all: 'all',
 };
+
+/** One row per observation of one listing — the raw trend series. */
+export const SNAPSHOT_FIELDS = [
+  'listingId', 'observedAt', 'favorites', 'reviewCount', 'price', 'quantity',
+];
+
+/** One row per log entry, so a finished run can be audited after the fact. */
+export const LOG_FIELDS = ['at', 'level', 'message', 'detail'];
 
 export const RUN_STATUS = {
   IDLE: 'idle',
@@ -225,6 +238,7 @@ export const MSG = {
   PARSE_DETAIL: 'PARSE_DETAIL',
   GET_DETAILS: 'GET_DETAILS',
   GET_REVIEWS: 'GET_REVIEWS',
+  GET_HISTORY_ROWS: 'GET_HISTORY_ROWS',
   SAVE_SETTINGS: 'SAVE_SETTINGS',
   GET_SETTINGS: 'GET_SETTINGS',
 };

@@ -86,6 +86,19 @@ const PREVIEW_COLUMNS = {
     ['Comment', '', (r) => r.comment],
     ['Photos', 'num', (r) => fmtOrDash(r.photoCount)],
   ],
+  [DATASETS.history]: [
+    ['Listing', 'num', (r) => r.listingId],
+    ['Observed', '', (r) => r.observedAt],
+    ['Favourites', 'num', (r) => fmtOrDash(r.favorites)],
+    ['Reviews', 'num', (r) => fmtOrDash(r.reviewCount)],
+    ['Price', 'num', (r) => fmtOrDash(r.price)],
+    ['Stock', 'num', (r) => fmtOrDash(r.quantity)],
+  ],
+  [DATASETS.log]: [
+    ['At', '', (r) => r.at],
+    ['Level', '', (r) => r.level],
+    ['Message', '', (r) => r.message],
+  ],
 };
 
 let rowTotal = -1;
@@ -370,9 +383,24 @@ const MSG_FOR_DATASET = {
   [DATASETS.search]: MSG.GET_RESULTS,
   [DATASETS.details]: MSG.GET_DETAILS,
   [DATASETS.reviews]: MSG.GET_REVIEWS,
+  [DATASETS.history]: MSG.GET_HISTORY_ROWS,
 };
 
+/** The run log lives on the run state rather than in a results store. */
+async function fetchLogRows(limit) {
+  const state = await send(MSG.GET_STATE);
+  const entries = (state && state.state && state.state.log) || [];
+  const rows = entries.map((e) => ({
+    at: new Date(e.t).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    level: e.level,
+    message: e.message,
+    detail: e.extra === undefined ? null : e.extra,
+  }));
+  return { total: rows.length, rows: limit > 0 ? rows.slice(-limit) : rows };
+}
+
 async function fetchDataset(dataset, limit) {
+  if (dataset === DATASETS.log) return fetchLogRows(limit);
   const type = MSG_FOR_DATASET[dataset];
   if (!type) return { rows: [], total: 0 };
   return send(type, limit ? { limit } : {});
@@ -409,16 +437,45 @@ async function refreshPreview() {
   renderPreview(rows, total, dataset);
 }
 
+/**
+ * Everything a run produced: the three result tables, the snapshot series behind
+ * the velocity numbers, the run log, and a summary of the run itself.
+ *
+ * The last three were being recorded and then left unreachable, so "All
+ * datasets" was not in fact all of them.
+ */
 async function collectAll() {
-  const [search, details, reviews] = await Promise.all([
+  const [search, details, reviews, historyRows, logRows, state] = await Promise.all([
     fetchDataset(DATASETS.search),
     fetchDataset(DATASETS.details),
     fetchDataset(DATASETS.reviews),
+    fetchDataset(DATASETS.history),
+    fetchDataset(DATASETS.log),
+    send(MSG.GET_STATE),
   ]);
   return {
     [DATASETS.search]: search.rows,
     [DATASETS.details]: details.rows,
     [DATASETS.reviews]: reviews.rows,
+    [DATASETS.history]: historyRows.rows,
+    [DATASETS.log]: logRows.rows,
+    run: runSummary(state),
+  };
+}
+
+/**
+ * What the run did, for the JSON export. Deliberately not the settings object:
+ * that holds the Etsy API key, which must never reach an exported file.
+ */
+function runSummary(state) {
+  const s = (state && state.state) || {};
+  return {
+    status: s.status || null,
+    startedAt: s.startedAt ? new Date(s.startedAt).toISOString() : null,
+    finishedAt: s.finishedAt ? new Date(s.finishedAt).toISOString() : null,
+    queries: Array.isArray(s.queries) ? s.queries : null,
+    counts: s.counts || null,
+    error: s.error || null,
   };
 }
 

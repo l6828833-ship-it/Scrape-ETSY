@@ -87,18 +87,31 @@ if workbook_path.exists():
     with zipfile.ZipFile(workbook_path) as zf:
         check("multi-sheet ZIP is intact (all CRCs valid)", zf.testzip() is None, "corrupt entry")
 
+        # All five tables a run produces. "Snapshot history" and "Run log" were
+        # recorded and then unreachable, so an "everything" export was missing
+        # the trend series every velocity figure is derived from.
+        EXPECTED_SHEETS = [
+            "Search rows",
+            "Listing details",
+            "Reviews",
+            "Snapshot history",
+            "Run log",
+        ]
+        sheet_numbers = tuple(range(1, len(EXPECTED_SHEETS) + 1))
+
         workbook = ET.fromstring(zf.read("xl/workbook.xml"))
         names = [s.get("name") for s in workbook.findall(".//s:sheet", NS)]
-        check("declares one sheet per dataset", len(names) == 3, f"found {names}")
+        check("declares one sheet per dataset",
+              len(names) == len(EXPECTED_SHEETS), f"found {names}")
         check("sheets are named after their datasets",
-              names == ["Search rows", "Listing details", "Reviews"], f"got {names}")
+              names == EXPECTED_SHEETS, f"got {names}")
 
         rel_root = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
         targets = sorted(r.get("Target") for r in rel_root)
-        expected = sorted(f"worksheets/sheet{i}.xml" for i in (1, 2, 3))
+        expected = sorted(f"worksheets/sheet{i}.xml" for i in sheet_numbers)
         check("every sheet is wired to a relationship", targets == expected, f"got {targets}")
         check("all worksheet parts are present",
-              all(f"xl/worksheets/sheet{i}.xml" in zf.namelist() for i in (1, 2, 3)))
+              all(f"xl/worksheets/sheet{i}.xml" in zf.namelist() for i in sheet_numbers))
 
         detail_sheet = ET.fromstring(zf.read("xl/worksheets/sheet2.xml"))
         detail_rows = detail_sheet.findall(".//s:sheetData/s:row", NS)

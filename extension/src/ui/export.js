@@ -8,7 +8,9 @@
  * hold a list.
  */
 
-import { FIELDS, DETAIL_FIELDS, REVIEW_FIELDS, DATASETS } from '../common/constants.js';
+import {
+  FIELDS, DETAIL_FIELDS, REVIEW_FIELDS, SNAPSHOT_FIELDS, LOG_FIELDS, DATASETS,
+} from '../common/constants.js';
 import { rowsToXlsx, rowsToWorkbook } from './xlsx.js';
 
 /** Internal bookkeeping fields are hidden from exports unless asked for. */
@@ -18,14 +20,26 @@ export const DATASET_FIELDS = {
   [DATASETS.search]: FIELDS,
   [DATASETS.details]: DETAIL_FIELDS,
   [DATASETS.reviews]: REVIEW_FIELDS,
+  [DATASETS.history]: SNAPSHOT_FIELDS,
+  [DATASETS.log]: LOG_FIELDS,
 };
 
 export const DATASET_LABELS = {
   [DATASETS.search]: 'Search rows',
   [DATASETS.details]: 'Listing details',
   [DATASETS.reviews]: 'Reviews',
+  [DATASETS.history]: 'Snapshot history',
+  [DATASETS.log]: 'Run log',
   [DATASETS.all]: 'All datasets',
 };
+
+/**
+ * Every table "All datasets" covers, in the order they belong in a workbook:
+ * the listings, their children, then the record of how they were obtained.
+ */
+export const ALL_DATASETS = [
+  DATASETS.search, DATASETS.details, DATASETS.reviews, DATASETS.history, DATASETS.log,
+];
 
 /** Arrays/objects become spreadsheet-friendly scalars. */
 function flattenValue(value) {
@@ -121,19 +135,16 @@ export function toXlsx(rows, options = {}) {
  */
 export function toWorkbook(data, options = {}) {
   const sheets = [];
-  const add = (dataset, name) => {
+  for (const dataset of ALL_DATASETS) {
     const rows = data[dataset];
-    if (!rows || !rows.length) return;
+    if (!rows || !rows.length) continue;
     const shaped = pickFields(rows, {
       ...options,
       fields: DATASET_FIELDS[dataset],
       flatten: true,
     });
-    sheets.push({ name, fields: shaped.fields, rows: shaped.rows });
-  };
-  add(DATASETS.search, 'Search rows');
-  add(DATASETS.details, 'Listing details');
-  add(DATASETS.reviews, 'Reviews');
+    sheets.push({ name: DATASET_LABELS[dataset], fields: shaped.fields, rows: shaped.rows });
+  }
   if (!sheets.length) throw new Error('Nothing to export yet');
   return rowsToWorkbook(sheets);
 }
@@ -181,6 +192,8 @@ const FILE_PREFIX = {
   [DATASETS.search]: 'etsy-search',
   [DATASETS.details]: 'etsy-listings',
   [DATASETS.reviews]: 'etsy-reviews',
+  [DATASETS.history]: 'etsy-history',
+  [DATASETS.log]: 'etsy-run-log',
   [DATASETS.all]: 'etsy-dataset',
 };
 
@@ -215,13 +228,17 @@ export async function exportDataset(dataset, format, data, options = {}) {
     return downloadBlob(toWorkbook(data, options), timestampedName('xlsx', FILE_PREFIX[DATASETS.all]));
   }
   if (format === 'json') {
-    const payload = {
-      exportedAt: new Date().toISOString(),
-      search: pickFields(data.search || [], { ...options, fields: FIELDS }).rows,
-      details: pickFields(data.details || [], { ...options, fields: DETAIL_FIELDS }).rows,
-      reviews: pickFields(data.reviews || [], { ...options, fields: REVIEW_FIELDS }).rows,
-    };
-    if (!payload.search.length && !payload.details.length && !payload.reviews.length) {
+    const payload = { exportedAt: new Date().toISOString() };
+    // The run's own account of itself, when the caller supplied it. Not a table,
+    // so it has no sheet in the workbook, but JSON can carry it.
+    if (data.run) payload.run = data.run;
+    for (const dataset of ALL_DATASETS) {
+      payload[dataset] = pickFields(data[dataset] || [], {
+        ...options,
+        fields: DATASET_FIELDS[dataset],
+      }).rows;
+    }
+    if (ALL_DATASETS.every((d) => !payload[d].length)) {
       throw new Error('Nothing to export yet');
     }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
