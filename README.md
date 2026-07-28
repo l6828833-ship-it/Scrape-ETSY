@@ -154,8 +154,25 @@ separately or as one multi-sheet workbook:
 (from the breadcrumb), `listingCreationDate` ("Listed on …"), `favoritesCount`,
 `cartCount`, `quantityAvailable`, `variations` + `variationCount`,
 `isPersonalizable` / `personalizationRequired`, `materials`, `tags`/`tagCount`,
-`shopName`, `shopUrl`, `shopTotalSales`, `starSeller`, `shopLocation`, `rating`,
-`reviewCount`, `shopReviewCount`.
+`freeShipping`, `shopName`, `shopUrl`, `shopTotalSales`, `isStarSeller`,
+`shopLocation`, `shopMemberSince`, `rating`, `reviewCount`, `shopReviewCount`.
+
+Column names are explicit rather than abbreviated, so if you are mapping from a
+field list: `favorites` → `favoritesCount`, `views` → `viewsCount`, `quantity` →
+`quantityAvailable`, `category` → `categoryPath`. Renaming them is a two-line
+change (`DETAIL_FIELDS` in `common/constants.js` plus the key in
+`finalizeDetail`).
+
+Two of these need a note on how they are decided:
+
+- **`freeShipping`** is stated in copy, not structured data, so it is read from
+  short shipping lines and explicitly rejects conditional shop promotions —
+  "Free shipping on orders over $35" and "when you spend $50" do **not** set the
+  flag, while "Free shipping to United States" and "Cost to ship: FREE" do. If a
+  page shows both a promo line and a genuine one, the genuine one wins.
+- **`shopMemberSince`** is an integer year, because "On Etsy since 2019" is all
+  Etsy renders — no invented month or day. Values before 2005 (Etsy's launch) or
+  in the future are rejected as mis-parses.
 
 **2. Customer voice** — one row per review: `rating`, `date`, `comment`,
 `reviewer`, `photos` + `photoCount`, and the purchased `variation`. This is the
@@ -191,7 +208,7 @@ Being straight about this, because these are the fields people most often expect
 | Field | Reality |
 |---|---|
 | `viewsCount` | Etsy removed public view counters years ago. The column exists and stays `null` unless a page genuinely exposes one — it is never inferred from something else. |
-| `tags` (the 13) | Not rendered verbatim. We collect the `/market/<term>` links Etsy renders for the listing, which mirror most of a listing's tags, capped at 13. Treat as a close proxy, not the literal tag list. |
+| `tags` (the 13) | Not rendered verbatim anywhere in the page. We harvest both link shapes that mirror them — `/market/<term>` links and the tag-style `/search?q=<term>` chips under "Explore related searches" — dedupe case-insensitively and cap at 13 (Etsy's own limit). `tagCount` tells you how many were actually recovered, so a listing showing `tagCount: 6` is not claiming to have found all 13. Treat as a close proxy, not the literal tag list. |
 | sales per listing | Only *shop* totals are public (`shopTotalSales`). Per-listing sales are not, so `reviewsPerDay` and `cartCount` are the honest proxies for conversion. |
 | reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (typically the first page) rather than depending on private API shapes. |
 
@@ -295,14 +312,14 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 146 checks, no network and no npm install
+bash tools/run-checks.sh          # 151 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (72) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tests/verify.mjs` (73) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
-| `tests/dom-check.mjs` (27) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge) and listing pages (favourites, cart count, stock, variations, personalisation, materials, tags, shop authority, reviews with photos, review caps), plus challenge detection |
+| `tests/dom-check.mjs` (31) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy
