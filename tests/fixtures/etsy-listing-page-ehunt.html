@@ -62,40 +62,121 @@
       </div>
 
       <!-- ============ EHunt - Etsy Rank Tool panel (injected) ============ -->
-      <div class="eh-exe-panel">
-        <h3>EHunt - Etsy Rank Tool</h3>
-        <table class="eh-exe-table">
-          <tbody>
+      <!--
+        Rebuilt to the panel's real structure. The critical difference from the
+        earlier guess: every numeric value cell also contains a
+        `.eh-product-detail-content-value-growth` delta. Reading the cell's text
+        wholesale therefore concatenated the two — Total Sales 68 with a delta of
+        6 became 686, and Store Sales 775 with 43 became 77543, which then
+        gap-filled shopTotalSales as though Etsy had published it.
+
+        The green arrow fill (#7AC756) is the only statement of direction, so it
+        is kept here. Total Revenue's delta deliberately has no arrow, because
+        that is how EHunt renders it, and an unsigned delta must be dropped.
+      -->
+      <div id="etsy-rank-tool-product-table" data-v-app="">
+        <div class="eh-product-detail">
+          <div class="eh-product-detail-header">
+            <h4 class="eh-product-detail-header-title"><span>EHunt - Etsy Rank Tool</span></h4>
+          </div>
+          <table class="eh-product-detail-content">
             <tr>
-              <td>Release Time</td><td>2026-02-02</td>
-              <td>Total Sales</td><td>68</td>
-              <td>Total Revenue</td><td>51</td>
+              <td class="eh-product-detail-content-label">Release Time</td>
+              <td class="eh-product-detail-content-value">2026-02-02</td>
+              <td class="eh-product-detail-content-label">Total Sales</td>
+              <td class="eh-product-detail-content-value">
+                <span class="el-tooltip__trigger">68</span>
+                <span class="eh-product-detail-content-value-growth el-tooltip__trigger">
+                  <svg viewBox="0 0 1024 1024"><path d="M507 213v725h42V204z" fill="#7AC756"></path></svg>
+                  <span>6</span>
+                </span>
+              </td>
+              <td class="eh-product-detail-content-label"><span>Total Revenue</span></td>
+              <td class="eh-product-detail-content-value">
+                <span class="el-tooltip__trigger">51</span>
+                <!-- No arrow: direction unknown, so this delta must be dropped. -->
+                <span class="eh-product-detail-content-value-growth el-tooltip__trigger">
+                  <span>4.5</span>
+                </span>
+              </td>
             </tr>
             <tr>
-              <td>Total Views</td><td>N/A</td>
-              <td>Total Reviews</td><td>7</td>
-              <td>Total Favorites</td><td>11</td>
+              <td class="eh-product-detail-content-label">Total Views</td>
+              <td class="eh-product-detail-content-value">N/A</td>
+              <td class="eh-product-detail-content-label">Total Reviews</td>
+              <td class="eh-product-detail-content-value">
+                <span class="el-only-child__content el-tooltip__trigger"> 7</span>
+                <span><span class="eh-product-detail-content-value-growth el-tooltip__trigger">
+                  <svg viewBox="0 0 1024 1024"><path d="M507 213v725h42V204z" fill="#7AC756"></path></svg>
+                  <span>3</span>
+                </span></span>
+              </td>
+              <td class="eh-product-detail-content-label">Total Favorites</td>
+              <td class="eh-product-detail-content-value">
+                <span class="el-only-child__content el-tooltip__trigger"> 11</span>
+                <span><span class="eh-product-detail-content-value-growth el-tooltip__trigger">
+                  <svg viewBox="0 0 1024 1024"><path d="M507 213v725h42V204z" fill="#7AC756"></path></svg>
+                  <span>1</span>
+                </span></span>
+              </td>
             </tr>
             <tr>
-              <td>Avg.Conv.Rate</td><td>N/A</td>
-              <td>Review Ratio</td><td>10.29%</td>
-              <td>Price</td><td>USD Price:0.91</td>
+              <td class="eh-product-detail-content-label">Avg.Conv.Rate</td>
+              <td class="eh-product-detail-content-value"><span class="el-tooltip__trigger">N/A</span></td>
+              <td class="eh-product-detail-content-label">Review Ratio</td>
+              <td class="eh-product-detail-content-value"><span class="el-tooltip__trigger">10.29%</span></td>
+              <td class="eh-product-detail-content-label">Price</td>
+              <td class="eh-product-detail-content-value">USD  Price:0.91&nbsp;
+                <span style="font-size: 12px; text-decoration: line-through;">USD  1.82</span>&nbsp;<br />
+                <span style="border-radius: 4px;">50% off</span>
+              </td>
             </tr>
             <tr>
-              <td>Product Type</td><td>Digital</td>
-              <td>Ships From</td><td>United States</td>
-              <td>Other Data</td><td>BestSeller Stocks 87</td>
+              <td class="eh-product-detail-content-label">Product Type</td>
+              <td class="eh-product-detail-content-value"><span>Digital</span></td>
+              <td class="eh-product-detail-content-label">Ships From</td>
+              <td class="eh-product-detail-content-value">United States</td>
+              <td class="eh-product-detail-content-label">Other Data</td>
+              <td class="eh-product-detail-content-value">
+                <div class="eh-etsy-icon">
+                  <div class="icon-is-click">BestSeller</div>
+                  <div class="green-icon">Stocks : 57</div>
+                </div>
+              </td>
             </tr>
             <tr>
-              <td>Category</td>
-              <td>Paper &amp; Party Supplies &gt; Paper &gt; Stationery &gt; Design &amp; Templates &gt; Templates &gt; Planner Templates</td>
+              <td class="eh-product-detail-content-label">Category</td>
+              <td class="eh-product-detail-content-value" colspan="5">
+                <span class="is-click">Paper &amp; Party Supplies<span> &gt; </span></span>
+                <span class="is-click">Paper<span> &gt; </span></span>
+                <span class="is-click">Stationery<span> &gt; </span></span>
+                <span class="is-click">Design &amp; Templates<span> &gt; </span></span>
+                <span class="is-click">Templates<span> &gt; </span></span>
+                <span class="is-click">Planner Templates</span>
+              </td>
             </tr>
             <tr>
-              <td>Store Name</td><td>LemonOrchardStudio</td>
-              <td>Store Sales</td><td>775</td>
+              <td class="eh-product-detail-content-label">Store Name</td>
+              <td class="eh-product-detail-content-value" colspan="3">
+                <a href="https://ehunt.ai/store-detail/LemonOrchardStudio">LemonOrchardStudio</a>
+                <span>
+                  <!-- The shop's rating, not this listing's. -->
+                  <div class="el-rate is-disabled" role="slider" aria-label="rating"
+                       aria-valuenow="4.94" aria-valuemin="0" aria-valuemax="5" tabindex="0"></div>
+                </span>
+              </td>
+              <td class="eh-product-detail-content-label">Store Sales</td>
+              <td class="eh-product-detail-content-value">
+                <span class="el-only-child__content el-tooltip__trigger"> 775</span>
+                <span><span class="eh-product-detail-content-value-growth el-tooltip__trigger">
+                  <svg viewBox="0 0 1024 1024"><path d="M507 213v725h42V204z" fill="#7AC756"></path></svg>
+                  <span>43</span>
+                </span></span>
+              </td>
             </tr>
-          </tbody>
-        </table>
+            <tr>
+              <td class="eh-product-detail-content-label">Product Tags</td>
+              <td class="eh-product-detail-content-value" colspan="5">
 
         <div style="display: flex;">
           <div style="line-height: 36px; flex-shrink: 0;">Tags :</div>
@@ -153,6 +234,10 @@
               <div class="eh-exe-tags-list-item-value"> (6.8M) </div>
             </div></div>
           </div>
+        </div>
+              </td>
+            </tr>
+          </table>
         </div>
       </div>
     </main>

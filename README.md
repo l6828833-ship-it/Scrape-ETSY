@@ -13,7 +13,7 @@ extension/            unpacked MV3 extension (this is what you load in Chrome)
   src/offscreen/      offscreen document (gives the worker a DOMParser)
   src/content/        script injected into Etsy tabs (lazy-load scroll + parse)
   src/ui/             popup / dashboard, exporters, dependency-free XLSX writer
-tests/                offline fixtures + 71 automated checks
+tests/                offline fixtures + 205 automated checks
 tools/                icon generator, workbook validator, check runner
 ```
 
@@ -253,9 +253,44 @@ same DOM, so our content script can read it: tick **Read the EHunt panel** and t
 deep scrape harvests
 
 - `tags` (all 13) plus `tagVolumes` (`{"Editable PDF Planner": 14800000}`)
-- `isDigital` from EHunt's own Product Type row
+- `isDigital` and `productType` from EHunt's own Product Type row
 - EHunt's estimates: `ehuntEstimatedSales`, `ehuntEstimatedRevenue`,
   `ehuntConversionRate`, `ehuntReviewRatio`
+- its price view — `ehuntPrice`, `ehuntOriginalPrice`, `ehuntDiscountPercent`,
+  `ehuntCurrency` — which is where the **discount percentage** comes from, a
+  figure Etsy's own markup does not state outright
+- `ehuntStock`, `ehuntBestSeller`, `ehuntShopRating`, `ehuntShipsFrom`, and a
+  category path several levels deeper than Etsy's breadcrumb
+  (`… > Design & Templates > Templates > Planner Templates`)
+- the **period-over-period deltas** shown beside each figure:
+  `ehuntSalesGrowth`, `ehuntRevenueGrowth`, `ehuntViewsGrowth`,
+  `ehuntReviewsGrowth`, `ehuntFavoritesGrowth`, `ehuntShopSalesGrowth`
+
+Two things about those deltas, because both are easy to get wrong:
+
+- **Only rises are recorded.** EHunt publishes the direction solely through the
+  arrow glyph's colour, and the only thing anyone has actually observed is its
+  green up-arrow. A green arrow therefore becomes `+6`; anything else — no arrow
+  at all (Total Revenue renders its delta bare), a rotated or flipped glyph, or a
+  red-dominant fill that could equally be a warning colour — produces `null`.
+  An unsigned `4.5` could be a rise or a fall, and exporting it as growth would
+  be inventing the half that matters. **If you find a listing whose figures are
+  falling, send that cell's HTML and the down-arrow can be supported properly.**
+- **They used to corrupt the figure beside them.** The delta lives *inside* the
+  same table cell as the value, so reading the cell wholesale spliced the two
+  together: Total Sales `68` with a delta of `6` parsed as **686**, and Store
+  Sales `775` with `43` as **77543** — which then gap-filled `shopTotalSales`
+  as though Etsy had published it. The delta is now removed before the cell is
+  read, and `parseCompactNumber` refuses any cell holding more than one number,
+  so a future decoration produces a gap rather than a fabricated figure.
+
+**EHunt's panel is also excluded from Etsy's page text.** It injects into the same
+`<body>`, and its labels read exactly like Etsy copy — its "Ships From / United
+States / Other Data" cells turned `shopLocation` into `"United States Other
+Data"`, and its "Store Sales 775" row is indistinguishable from an Etsy sales
+line. The panel subtree is cut out before any Etsy-side regex runs, so the two
+sources stay separable and `ehuntPanel` tells you whether the panel contributed
+at all.
 
 **This now configures itself.** Ticking the option switches the deep scrape to
 real tabs (a worker `fetch()` returns HTML no other extension has touched) and
@@ -282,6 +317,30 @@ a favourite count read from Etsy is never overwritten by EHunt's. Its
 sales/revenue/conversion figures keep the `ehunt` prefix because they are
 **third-party estimates, not figures Etsy published**, and `N/A` in the panel
 becomes `null`, never `0`.
+
+EHunt gap-fills `tags`, `tagVolumes`, `isDigital`, `favoritesCount`,
+`viewsCount`, `shopTotalSales`, `listingCreationDate`, `categoryPath` and
+`reviewCount`. Five values are deliberately *never* merged into their Etsy
+equivalents, and each stays available under its own `ehunt*` name:
+
+- **`ehuntStock` never fills `quantityAvailable`.** The trend history snapshots
+  that column, and once stored an EHunt figure is indistinguishable from an
+  Etsy-observed one. Since the panel is present on some runs and not others, the
+  series would alternate between two independently-derived numbers and
+  manufacture stock movement — in the one feature built to detect real movement.
+- **`ehuntPrice` never fills `price`.** EHunt normalises to USD, so merging them
+  would silently mix currencies on a non-USD listing.
+- **`ehuntShopRating` never fills `rating`.** EHunt's star widget sits beside the
+  *store* name, so it is the shop's rating, not this listing's — a different
+  number that happens to look like the right one.
+- **`ehuntShipsFrom` never fills `shopLocation`.** EHunt states a country, Etsy a
+  city and state; mixing granularities makes the column unusable.
+- **`ehuntShopName` never fills `shopName`.** Etsy always supplies it, and
+  EHunt's cell also hosts a rating widget whose score text can leak in.
+
+`ehuntOriginalPrice` comes from the strike-through element specifically, not from
+"whichever figure is largest": on a listing showing a price *range*, the larger
+number was never a former price, and treating it as one invents a discount.
 
 ### Getting the real 13 tags
 
@@ -425,14 +484,14 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 189 checks, no network and no npm install
+bash tools/run-checks.sh          # 205 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (98) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tests/verify.mjs` (105) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
-| `tests/dom-check.mjs` (44) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
+| `tests/dom-check.mjs` (53) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy
