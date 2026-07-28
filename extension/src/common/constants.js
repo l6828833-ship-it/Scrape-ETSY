@@ -97,7 +97,11 @@ export const DEFAULTS = {
    */
   tabMode: 'window',
   /** How long to wait for the EHunt panel to render its tags. */
-  ehuntWaitMs: 8000,
+  // EHunt fetches each listing's figures from its own service before it can draw
+  // its tag table, so this is a budget measured in seconds, not milliseconds of
+  // render time. The wait extends past this on its own while the panel is still
+  // visibly filling in, and abandons it early when EHunt is not installed.
+  ehuntWaitMs: 20000,
   /** Pause and surface the tab so a human can solve a CAPTCHA. */
   manualCaptchaSolve: true,
   /** Keep scraped tabs open (debugging). */

@@ -793,6 +793,34 @@ try {
       return JSON.stringify({ present: EtsyEhunt.isPresent(document), panel, merged });
     })()`));
 
+    await test('a half-loaded panel is not mistaken for a finished one', async () => {
+      // The bug this pins: EHunt mounts its container in well under a second but
+      // fills the tag table seconds later. Anything that waits only for the
+      // container to exist parses it while the tag row is still empty and reports
+      // "no tags" for a listing that was about to have thirteen.
+      const stages = JSON.parse(await session.evaluate(`(() => {
+        const build = (inner) => new DOMParser().parseFromString(
+          '<html><body>' + inner + '</body></html>', 'text/html');
+        return JSON.stringify({
+          nothing: EtsyEhunt.panelStage(build('<p>plain Etsy page</p>')),
+          installedOnly: EtsyEhunt.panelStage(build(
+            '<img src="chrome-extension://pmpgnefoilpinnblccjddomajohmbpko/icons/ehicon.png">')),
+          emptyFrame: EtsyEhunt.panelStage(build(
+            '<div id="etsy-rank-tool-product-table"></div>')),
+          statsOnly: EtsyEhunt.panelStage(build(
+            '<div id="etsy-rank-tool-product-table"><table>'
+            + '<tr><td class="eh-product-detail-content-label">Total Sales</td>'
+            + '<td class="eh-product-detail-content-value">68</td></tr></table></div>')),
+          loaded: EtsyEhunt.panelStage(document)
+        });
+      })()`));
+      assert.equal(stages.nothing, 0, 'no EHunt at all');
+      assert.equal(stages.installedOnly, 1, 'EHunt is here but has drawn nothing');
+      assert.equal(stages.emptyFrame, 2, 'frame up, still empty — must NOT count as ready');
+      assert.equal(stages.statsOnly, 3, 'stats in, tag row still missing');
+      assert.equal(stages.loaded, 4, 'the fully rendered fixture panel');
+    });
+
     await test('finds the EHunt panel in the page DOM', () => {
       assert.equal(out.present, true);
       assert.ok(out.panel, 'panel parsed');

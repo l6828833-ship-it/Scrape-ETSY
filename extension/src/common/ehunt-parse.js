@@ -232,6 +232,73 @@
     return null;
   }
 
+  /**
+   * How far along is EHunt's panel?
+   *
+   *   0 — no sign of EHunt at all
+   *   1 — EHunt is on the page (its icons/classes) but the panel frame is not up
+   *   2 — the panel container exists, still empty
+   *   3 — the stats table has rendered
+   *   4 — the tag list has rendered, which is the only stage we actually want
+   *
+   * The panel mounts long before it has data: EHunt fetches per-listing figures
+   * from its own service, so the container appears in well under a second while
+   * the tag row can take several more. Anything that merely waits for the panel
+   * to *exist* therefore parses it while the tags row is still empty and reports
+   * "no tags" on a listing that was about to have thirteen of them.
+   *
+   * Reporting the stage rather than a boolean is what lets the wait distinguish
+   * "still loading, keep waiting" from "not installed, stop immediately".
+   */
+  function panelStage(doc) {
+    if (!doc || typeof doc.querySelector !== 'function') return 0;
+    const root = findPanelRoot(doc);
+    if (!root) return isInstalledOnPage(doc) ? 1 : 0;
+    if (readTags(root).tags.length) return 4;
+    if (Object.keys(readStats(root).stats).length) return 3;
+    return 2;
+  }
+
+  /** Milliseconds the wait policy is built around. */
+  const WAIT = {
+    /**
+     * How long to look for any trace of EHunt before concluding it is not here.
+     * Kept short deliberately: without it, a run on a browser that has no EHunt
+     * installed pays the full timeout on every single listing for nothing.
+     */
+    PROBE_MS: 3000,
+    /**
+     * Extra time granted each time the panel visibly advances a stage. Progress
+     * is evidence that waiting will pay off; silence is evidence that it will
+     * not, so only progress buys more time.
+     */
+    PROGRESS_GRACE_MS: 10000,
+    /** Ceiling, so a permanently half-rendered panel cannot stall a run. */
+    HARD_MAX_MS: 45000,
+  };
+
+  /**
+   * Should the wait continue?
+   *
+   * Pure so the policy can be tested without a browser and without real time.
+   *
+   * @param {{bestStage:number, elapsedMs:number, budgetMs:number,
+   *          sinceProgressMs:number}} state
+   */
+  function shouldKeepWaitingForEhunt(state) {
+    const bestStage = Number(state.bestStage) || 0;
+    const elapsed = Number(state.elapsedMs) || 0;
+    const budget = Math.max(Number(state.budgetMs) || 0, 0);
+    const sinceProgress = Number(state.sinceProgressMs) || 0;
+
+    if (bestStage >= 4) return false;                 // tags are in, done
+    if (elapsed >= Math.max(budget, WAIT.HARD_MAX_MS)) return false;
+    // Never seen EHunt: give up as soon as the probe window closes.
+    if (bestStage === 0) return elapsed < Math.min(WAIT.PROBE_MS, budget || WAIT.PROBE_MS);
+    // Seen it loading: the configured budget, plus grace after each advance.
+    return elapsed < budget || sinceProgress < WAIT.PROGRESS_GRACE_MS;
+  }
+
   /** True when the EHunt panel has rendered on this page. */
   function isPresent(doc) {
     if (!doc || typeof doc.querySelector !== 'function') return false;
@@ -663,6 +730,9 @@
     GROWTH_FIELDS,
     isPresent,
     isInstalledOnPage,
+    panelStage,
+    shouldKeepWaitingForEhunt,
+    WAIT,
     findPanelRoot,
     domRoots,
     panelRoot,
