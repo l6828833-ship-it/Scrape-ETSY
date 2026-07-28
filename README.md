@@ -13,7 +13,7 @@ extension/            unpacked MV3 extension (this is what you load in Chrome)
   src/offscreen/      offscreen document (gives the worker a DOMParser)
   src/content/        script injected into Etsy tabs (lazy-load scroll + parse)
   src/ui/             popup / dashboard, exporters, dependency-free XLSX writer
-tests/                offline fixtures + 71 automated checks
+tests/                offline fixtures + 213 automated checks
 tools/                icon generator, workbook validator, check runner
 ```
 
@@ -173,11 +173,40 @@ Two of these need a note on how they are decided:
 - **`shopMemberSince`** is an integer year, because "On Etsy since 2019" is all
   Etsy renders — no invented month or day. Values before 2005 (Etsy's launch) or
   in the future are rejected as mis-parses.
+- **`shopAgeMonths`** exists because many listings state tenure instead of a
+  start year: "11 months on Etsy", "3 years on Etsy". Those pages leave
+  `shopMemberSince` `null`, and the two fields are deliberately independent — "3
+  years" is anywhere from 36 to 47 months, so deriving a start year from it would
+  be a guess presented as a fact. Read whichever one is populated.
+- **`categoryPath`** prefers the JSON-LD `BreadcrumbList`, then the DOM
+  breadcrumb, and finally the `Product.category` string, which Etsy writes with
+  `<` separators, broadest first ("Paper & Party Supplies < Paper < …"). Some
+  listing pages publish only that last form.
+- **`tags`** are harvested from links Etsy renders on the page, and on many
+  listings the tags module is a **lazy-loaded placeholder** — the served HTML
+  contains no `/market/` links at all. Tag harvesting therefore needs the tab
+  engine (`Engine: tab`), where the module has actually loaded; a fetch-mode run
+  will legitimately return `tags: null` on those listings. For the literal
+  13-tag array, supply an Etsy API key or enable the EHunt reader — `tagSource`
+  always records which of the three you got.
 
 **2. Customer voice** — one row per review: `rating`, `date`, `comment`,
 `reviewer`, `photos` + `photoCount`, and the purchased `variation`. This is the
 dataset worth feeding to an LLM: complaints in reviews are the clearest
 statement of what a competing listing is missing.
+
+Reviews come from two places and are merged. The DOM reviews pane is richer
+(photos, the purchased variation), but listing pages also ship a JSON-LD
+`review[]` array in the initial HTML — which is the only source available in
+fetch mode, where there is no live document to read.
+
+Duplicates collapse on matching reviewer + date, or on one comment being the
+opening of the other (the DOM renders a collapsed teaser, JSON-LD carries the
+full body, so the fuller text wins). A *known* difference in reviewer or date
+vetoes the match, because two buyers can post word-for-word the same thing and
+that is still two reviews. `photoCount` is `null`, not `0`, on a review that only
+JSON-LD supplied: that source says nothing about attachments, so claiming zero
+would be a claim about the review it cannot support.
 
 **3. Trend / velocity** — derived, not scraped. Every enriched listing appends a
 compact snapshot (favourites, reviews, price, stock) to a local history, and the
@@ -207,6 +236,12 @@ Being straight about this, because these are the fields people most often expect
 
 | Field | Reality |
 |---|---|
+| `viewsCount` | Etsy removed public view counters years ago. The column exists and stays `null` unless a page genuinely exposes one — it is never inferred from something else. |
+| `tags` (the 13) | Not rendered verbatim in the page, and on many listings the tags module is a lazy-loaded placeholder with no links at all in the served HTML. Three routes, in descending fidelity: an Etsy API key (the literal array), the EHunt panel, or harvesting `/market/<term>` and `/search?q=<term>` links with the tab engine. `tagSource` records which you got and `tagCount` how many, so a `tagCount: 6` row never claims to be the full set. |
+| sales per listing | Only *shop* totals are public (`shopTotalSales`). Per-listing sales are not, so `reviewsPerDay` and `cartCount` are the honest proxies for conversion. |
+| reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (its JSON-LD array plus the rendered pane) rather than depending on private API shapes. |
+| exact shop start date | Listings show either a year ("On Etsy since 2019" → `shopMemberSince`) or a duration ("11 months on Etsy" → `shopAgeMonths`). Neither is converted into the other, because a duration only pins the start date to a range. |
+
 ### If a deep-scrape field comes back empty
 
 The run now tells you. Each listing logs what it found — `1482 favs, 940 chars
@@ -359,11 +394,17 @@ than a `null`. So each of these requires positive evidence and otherwise stays
   its star rating (a $2.59 PDF "rated 2.59") while everything over $5 reported
   `null`. Prices and ratings are both small decimals, so no range check can
   separate them.
-- **`reviewCount`** is taken from beside the stars, or from a single `(1,482)`
-  token when a card has exactly one. Two candidates and no stars means we decline
-  rather than pick. A count that repeats across several listings from the *same
-  shop* is a shop total, not a per-listing figure, so it is cleared at the end of
-  the page — one card cannot tell those apart, but a page can.
+- **`reviewCount`** is read first from the star widget's accessible label —
+  `aria-label="Rating: 4.94 out of 5 stars, 779 reviews"` — because that is where
+  Etsy actually publishes it. Nothing in the visible text states the number, so a
+  `textContent`-only scan returned `null` for nearly every row of a live run.
+  Only rating-scoped elements are inspected, never the whole card, since
+  shop-level totals are labelled "N reviews" too. Failing that: the text beside
+  the stars, or a single `(1,482)` token when a card has exactly one. Two
+  candidates and no stars means we decline rather than pick. A count that repeats
+  across several listings from the *same shop* is a shop total, not a per-listing
+  figure, so it is cleared at the end of the page — one card cannot tell those
+  apart, but a page can.
 - **`isDigital`** is set when Etsy labels the listing ("Digital Download",
   "Instant Download"), whether as its own badge or inside a longer line. Absence
   means `null` (unknown), never `false`, because Etsy says nothing for physical
@@ -425,14 +466,14 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 189 checks, no network and no npm install
+bash tools/run-checks.sh          # 213 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (98) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tests/verify.mjs` (113) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
-| `tests/dom-check.mjs` (44) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
+| `tests/dom-check.mjs` (53) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus the structures taken from a real Etsy page (review counts published only in the star widget's `aria-label`, a `<`-separated category with no breadcrumb, tenure in months with no start year, JSON-LD reviews merged with the DOM pane, an empty lazy-loaded tags module) and challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy
