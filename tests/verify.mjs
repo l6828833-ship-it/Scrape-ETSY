@@ -402,6 +402,121 @@ await test('dedupe per_query keeps the same listing across different queries', (
   assert.equal(b.kept.length, 1, 'other query gets its own namespace');
 });
 
+group('Etsy Open API enrichment');
+
+const api = await import(path.join(ext, 'src/common/etsy-api.js'));
+
+/** Shape documented for getListing (?includes=Shop). */
+const apiPayload = {
+  listing_id: 1544102938,
+  title: '2026 Calendar Printable',
+  description: 'Instant download 2026 wall calendar.\nIncludes A4, A3 and US Letter.',
+  state: 'active',
+  quantity: 812,
+  num_favorers: 1482,
+  views: 20431,
+  url: 'https://www.etsy.com/listing/1544102938/2026-calendar-printable',
+  price: { amount: 960, divisor: 100, currency_code: 'USD' },
+  tags: ['2026 calendar', 'printable calendar', 'digital download', 'minimalist',
+    'wall calendar', 'canva template', 'monthly planner', 'instant download',
+    'a4 calendar', 'letter size', 'sunday start', 'monday start', 'office decor'],
+  materials: ['pdf', 'digital file'],
+  is_personalizable: true,
+  personalization_is_required: false,
+  original_creation_timestamp: 1768176000,
+  taxonomy_id: 1234,
+  shop: {
+    shop_name: 'PaperMoonStudioCo',
+    transaction_sold_count: 12345,
+    review_count: 8214,
+    review_average: 4.9,
+    url: 'https://www.etsy.com/shop/PaperMoonStudioCo',
+  },
+};
+
+await test('maps the real 13 tags and the rest of the listing', () => {
+  const r = api.mapApiListing(apiPayload);
+  assert.equal(r.listingId, '1544102938');
+  assert.equal(r.tags.length, 13, 'the full tag set, not a proxy');
+  assert.equal(r.tagCount, 13);
+  assert.equal(r.tags[0], '2026 calendar');
+  assert.match(r.description, /^Instant download 2026 wall calendar/);
+  assert.equal(r.favoritesCount, 1482);
+  assert.equal(r.viewsCount, 20431, 'views exist in the API even though the page hides them');
+  assert.equal(r.quantityAvailable, 812);
+  assert.equal(r.price, 9.6, 'amount/divisor money object');
+  assert.equal(r.currency, 'USD');
+  assert.equal(r.availability, 'InStock');
+  assert.deepEqual(r.materials, ['pdf', 'digital file']);
+  assert.equal(r.isPersonalizable, true);
+  assert.equal(r.personalizationRequired, false);
+  assert.equal(r.listingCreationDate, '2026-01-12');
+  assert.equal(r.shopTotalSales, 12345, 'from ?includes=Shop');
+  assert.equal(r.shopReviewCount, 8214);
+});
+
+await test('tolerates missing, empty and wrong-typed fields', () => {
+  const r = api.mapApiListing({ listing_id: 7, title: 'x', tags: 'not-an-array', quantity: 'abc' });
+  assert.equal(r.listingId, '7');
+  assert.ok(!('tags' in r), 'a non-array tags value is dropped, not coerced');
+  assert.ok(!('quantityAvailable' in r));
+  assert.ok(!('shopTotalSales' in r), 'no shop include, no shop fields');
+  assert.equal(api.mapApiListing(null), null);
+  assert.equal(api.mapApiListing({}), null, 'no listing_id means unusable');
+  assert.equal(api.mapApiListing({ results: [apiPayload] }).tagCount, 13, 'unwraps results[]');
+});
+
+await test('sold-out and draft states map to availability', () => {
+  assert.equal(api.mapApiListing({ listing_id: 1, state: 'sold_out' }).availability, 'OutOfStock');
+  assert.equal(api.mapApiListing({ listing_id: 1, state: 'expired' }).availability, 'Discontinued');
+  assert.ok(!('availability' in api.mapApiListing({ listing_id: 1, state: 'weird' })));
+});
+
+await test('API values win, but never overwrite scraped data with nothing', () => {
+  const scraped = {
+    listingId: '1544102938',
+    tags: ['2026 calendar', 'printable calendar'], // link-derived proxy
+    tagCount: 2,
+    description: 'short teaser',
+    favoritesCount: null,
+    cartCount: 20, // page-only signal
+    isStarSeller: true, // page-only signal
+    shopLocation: 'Portland, Oregon', // page-only signal
+  };
+  const merged = api.mergeApiRecord(scraped, api.mapApiListing(apiPayload));
+  assert.equal(merged.tags.length, 13, 'API tags replace the proxy');
+  assert.equal(merged.tagSource, 'api');
+  assert.equal(merged.apiEnriched, true);
+  assert.equal(merged.favoritesCount, 1482, 'API fills what the page lacked');
+  assert.match(merged.description, /Includes A4/, 'fuller description wins');
+  assert.equal(merged.cartCount, 20, 'page-only fields survive');
+  assert.equal(merged.isStarSeller, true);
+  assert.equal(merged.shopLocation, 'Portland, Oregon');
+});
+
+await test('without an API record the scrape is labelled as the proxy', () => {
+  const merged = api.mergeApiRecord({ tags: ['a', 'b'], tagCount: 2 }, null);
+  assert.equal(merged.tagSource, 'page-links', 'provenance is explicit, never implied');
+  assert.equal(merged.apiEnriched, false);
+  assert.deepEqual(merged.tags, ['a', 'b']);
+  assert.equal(api.mergeApiRecord({ tags: [] }, null).tagSource, null);
+});
+
+await test('a bad key is fatal, a rate limit is retryable', async () => {
+  const noKey = await api.fetchListingFromApi('1', '');
+  assert.equal(noKey.ok, false);
+  assert.equal(noKey.fatal, true, 'no key must not be retried per listing');
+  const noId = await api.fetchListingFromApi('', 'key');
+  assert.equal(noId.ok, false);
+  assert.equal(noId.fatal, false);
+});
+
+await test('tagSource is part of the exported schema', async () => {
+  const { DETAIL_FIELDS: fields } = await import(path.join(ext, 'src/common/constants.js'));
+  assert.ok(fields.includes('tagSource'),
+    'consumers must be able to tell real tags from the proxy');
+});
+
 group('Deep-scrape gap reporting');
 
 await test('names the key fields that came back empty', () => {

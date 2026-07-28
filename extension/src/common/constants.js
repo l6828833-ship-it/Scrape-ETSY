@@ -68,6 +68,13 @@ export const DEFAULTS = {
   maxReviewsPerListing: 20,
   /** Keep per-listing snapshots so favourites/review velocity can be derived. */
   trackHistory: true,
+  /**
+   * Etsy Open API v3 application keystring (free, from
+   * https://www.etsy.com/developers/register). Optional: when set, the deep
+   * scrape also asks the API for each listing, which is the only way to get the
+   * real 13 tags plus an authoritative description, favourites and stock.
+   */
+  etsyApiKey: '',
   /** Random inter-request delay window, milliseconds. */
   minDelayMs: 1000,
   maxDelayMs: 3000,
@@ -129,8 +136,9 @@ export const DETAIL_FIELDS = [
   // monetisation structure
   'variationCount', 'variations', 'isPersonalizable', 'personalizationRequired',
   'materials',
-  // SEO
-  'tags', 'tagCount',
+  // SEO — tagSource records whether these are the real API tags or the
+  // link-derived proxy, so a partial harvest is never mistaken for the full set.
+  'tags', 'tagCount', 'tagSource',
   // shipping incentive
   'freeShipping',
   // seller authority

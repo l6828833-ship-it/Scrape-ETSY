@@ -88,6 +88,8 @@ export function normalizeSettings(input) {
     'scrapeReviews', 'trackHistory']) {
     s[flag] = Boolean(s[flag]);
   }
+  // Stored locally and never logged; keystrings are ~24 chars of [a-z0-9].
+  s.etsyApiKey = String(s.etsyApiKey || '').trim().slice(0, 64);
   s.maxDetailListings = clampInt(s.maxDetailListings, 1, LIMITS.maxDetailListings, DEFAULTS.maxDetailListings);
   s.detailConcurrency = clampInt(s.detailConcurrency, 1, LIMITS.maxDetailConcurrency, DEFAULTS.detailConcurrency);
   s.maxReviewsPerListing = clampInt(s.maxReviewsPerListing, 0, LIMITS.maxReviewsPerListing, DEFAULTS.maxReviewsPerListing);

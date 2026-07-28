@@ -38,6 +38,9 @@
     "webRequest",
     "webRequestAuthProvider"
   ],
+  "optional_host_permissions": [
+    "https://api.etsy.com/*"
+  ],
   "host_permissions": [
     "https://www.etsy.com/*"
   ]
