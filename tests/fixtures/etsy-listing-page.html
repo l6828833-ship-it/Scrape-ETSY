@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<!--
+  Offline fixture mirroring the shape of an Etsy listing page
+  (https://www.etsy.com/listing/1027105561/...) closely enough to exercise the
+  deep-scrape parser end to end:
+
+    * JSON-LD Product      -> title, description, price, currency, rating, image
+    * JSON-LD Breadcrumb   -> categoryPath
+    * DOM                  -> favourites, cart count, stock, variations,
+                              personalisation, materials, tags, shop authority
+    * reviews block        -> 3 reviews incl. photos and a 4-star outlier
+
+  Deliberately contains NO view counter, because Etsy does not publish one — the
+  parser must leave viewsCount null rather than inventing it.
+
+  Hand-written from the documented public structure; no Etsy markup copied.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>2026 Calendar Printable, Minimalist Wall Calendar - Etsy</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "2026 Calendar Printable, Minimalist Wall Calendar Digital Download",
+        "description": "Instant download 2026 wall calendar in a clean minimalist style. Includes A4, A3 and US Letter files. Print at home or at a local print shop.",
+        "url": "https://www.etsy.com/listing/1544102938/2026-calendar-printable-minimalist?click_key=xyz&click_sum=abc",
+        "sku": "1544102938",
+        "image": [
+          "https://i.etsystatic.com/55555555/r/il/eeeeee/5555555555/il_fullxfull.5555555555_qrst.jpg",
+          "https://i.etsystatic.com/55555555/r/il/ffffff/5555555556/il_fullxfull.5555555556_uvwx.jpg"
+        ],
+        "offers": {
+          "@type": "Offer",
+          "price": "9.60",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock",
+          "seller": { "@type": "Organization", "name": "PaperMoonStudioCo" }
+        },
+        "aggregateRating": {
+          "@type": "AggregateRating",
+          "ratingValue": "4.9",
+          "reviewCount": "128"
+        }
+      }
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+          { "@type": "ListItem", "position": 1, "name": "Home & Living" },
+          { "@type": "ListItem", "position": 2, "name": "Office" },
+          { "@type": "ListItem", "position": 3, "name": "Calendars & Planners" }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <nav aria-label="Breadcrumbs">
+      <a href="/c/home-and-living">Home &amp; Living</a>
+      <a href="/c/home-and-living/office">Office</a>
+      <a href="/c/home-and-living/office/calendars">Calendars &amp; Planners</a>
+    </nav>
+
+    <main>
+      <div class="listing-images">
+        <ul data-carousel-pane-list>
+          <li><img data-index="0" src="https://i.etsystatic.com/55555555/r/il/eeeeee/5555555555/il_794xN.5555555555_qrst.jpg" alt="" /></li>
+          <li><img data-index="1" src="https://i.etsystatic.com/55555555/r/il/ffffff/5555555556/il_794xN.5555555556_uvwx.jpg" alt="" /></li>
+          <li><img data-index="2" src="https://i.etsystatic.com/55555555/r/il/aaaaaa/5555555557/il_794xN.5555555557_yzab.jpg" alt="" /></li>
+        </ul>
+      </div>
+
+      <div class="buy-box">
+        <h1 data-buy-box-listing-title>
+          2026 Calendar Printable, Minimalist Wall Calendar Digital Download
+        </h1>
+
+        <div data-buy-box-region="price">
+          <span class="currency-symbol">$</span><span class="currency-value">9.60</span>
+          <span class="wt-text-strikethrough">$12.00</span>
+          <span class="wt-text-caption">Sale ends in 12 hours</span>
+        </div>
+
+        <a href="/listing/1544102938/2026-calendar-printable-minimalist/favoriters">1,482 favorites</a>
+        <p class="wt-text-caption wt-text-brick">20 people have this in their cart</p>
+        <p class="wt-text-caption">Only 4 left</p>
+
+        <label for="variation-selector-1">Size</label>
+        <select data-variation-id="1" id="variation-selector-1">
+          <option value="">Select an option</option>
+          <option value="1">A4</option>
+          <option value="2">A3</option>
+          <option value="3">US Letter</option>
+        </select>
+
+        <label for="variation-selector-2">Color</label>
+        <select data-variation-id="2" id="variation-selector-2">
+          <option value="">Select an option</option>
+          <option value="10">Black &amp; White</option>
+          <option value="11">Sage</option>
+        </select>
+
+        <label for="inventory-quantity">Quantity</label>
+        <select id="inventory-quantity" name="quantity">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+        </select>
+
+        <div data-personalization-container>
+          <label for="personalization-field">Add your personalization (required)</label>
+          <textarea id="personalization-field" maxlength="256" required></textarea>
+        </div>
+      </div>
+
+      <section class="shop-section">
+        <a href="/shop/PaperMoonStudioCo?ref=shop-header-name">
+          <span data-shop-name="PaperMoonStudioCo">PaperMoonStudioCo</span>
+        </a>
+        <p class="wt-text-caption">Star Seller</p>
+        <p class="wt-text-caption">12,345 sales</p>
+        <p class="wt-text-caption">8,214 reviews</p>
+        <p class="wt-text-caption">Ships from Portland, Oregon</p>
+      </section>
+
+      <section data-product-details-container>
+        <div id="wt-content-toggle-product-details-read-more">
+          <p data-id="description-text">
+            Instant download 2026 wall calendar in a clean minimalist style.
+          </p>
+          <ul>
+            <li>Digital download</li>
+            <li>Materials: Recycled paper, Archival ink</li>
+            <li>Listed on Jan 12, 2026</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="related-searches">
+        <a href="/market/2026_calendar">2026 calendar</a>
+        <a href="/market/printable_calendar">printable calendar</a>
+        <a href="/market/minimalist_wall_art">minimalist wall art</a>
+        <a href="/market/digital_download">digital download</a>
+        <a href="/market/2026_calendar">2026 calendar</a>
+      </section>
+
+      <section id="reviews" data-reviews-container>
+        <h2>Reviews</h2>
+
+        <div data-review-region>
+          <div aria-label="5 out of 5 stars"></div>
+          <a href="/people/quietmornings">quietmornings</a>
+          <p class="wt-text-caption">Mar 3, 2026</p>
+          <p data-review-text>
+            Printed beautifully on my home printer. Only wish it came with a matching
+            weekly planner page — would buy that instantly.
+          </p>
+          <button type="button">
+            <img src="https://i.etsystatic.com/iap/review1/il_75x75.review1_aaaa.jpg" alt="" />
+          </button>
+          <p class="wt-text-caption">Size: A3</p>
+        </div>
+
+        <div data-review-region>
+          <div aria-label="5 out of 5 stars"></div>
+          <a href="/people/deskplantdad">deskplantdad</a>
+          <p class="wt-text-caption">Feb 18, 2026</p>
+          <p data-review-text>
+            Exactly what I wanted for the office. Seller answered a question about
+            margins within an hour.
+          </p>
+        </div>
+
+        <div data-review-region>
+          <div aria-label="4 out of 5 stars"></div>
+          <a href="/people/annaK">annaK</a>
+          <p class="wt-text-caption">Feb 2, 2026</p>
+          <p data-review-text>
+            Lovely design but the US Letter file had wider margins than expected, so I
+            had to trim it.
+          </p>
+          <button type="button">
+            <img src="https://i.etsystatic.com/iap/review3/il_75x75.review3_cccc.jpg" alt="" />
+          </button>
+          <button type="button">
+            <img src="https://i.etsystatic.com/iap/review3b/il_75x75.review3b_dddd.jpg" alt="" />
+          </button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

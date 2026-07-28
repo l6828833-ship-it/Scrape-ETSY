@@ -31,6 +31,14 @@ export const LIMITS = {
   /** Hard cap on retained rows so chrome.storage.local stays healthy. */
   maxStoredRows: 50000,
   maxLogEntries: 300,
+  maxDetailListings: 500,
+  maxDetailConcurrency: 4,
+  maxReviewsPerListing: 100,
+  maxStoredDetails: 20000,
+  maxStoredReviews: 100000,
+  /** Snapshots retained per listing (oldest pruned first). */
+  maxSnapshotsPerListing: 60,
+  maxTrackedListings: 20000,
 };
 
 export const DEFAULTS = {
@@ -49,6 +57,17 @@ export const DEFAULTS = {
   freeShippingOnly: false,
   /** Drop "Ad by Etsy seller" placements instead of storing them. */
   excludeSponsored: false,
+  /** Phase 2: open each collected listing and extract the deep dataset. */
+  scrapeDetails: false,
+  /** Cap on listings enriched per run (each one is an extra page request). */
+  maxDetailListings: 25,
+  /** Parallel listing-detail requests (kept lower than search concurrency). */
+  detailConcurrency: 2,
+  /** Capture the reviews rendered on the listing page. */
+  scrapeReviews: true,
+  maxReviewsPerListing: 20,
+  /** Keep per-listing snapshots so favourites/review velocity can be derived. */
+  trackHistory: true,
   /** Random inter-request delay window, milliseconds. */
   minDelayMs: 1000,
   maxDelayMs: 3000,
@@ -93,6 +112,51 @@ export const FIELDS = [
   'scrapedAt',
 ];
 
+/**
+ * Listing-detail ("deep scrape") output columns.
+ *
+ * Grouped by intent: core listing facts, sales-velocity signals, monetisation
+ * structure, SEO surface, seller authority, then the derived trend metrics that
+ * only become meaningful once the same listing has been seen more than once.
+ */
+export const DETAIL_FIELDS = [
+  // core
+  'listingId', 'url', 'title', 'description', 'price', 'currency',
+  'originalPrice', 'onSale', 'availability', 'mainImage', 'imageCount',
+  'categoryPath', 'listingCreationDate',
+  // sales velocity
+  'favoritesCount', 'cartCount', 'viewsCount', 'quantityAvailable',
+  // monetisation structure
+  'variationCount', 'variations', 'isPersonalizable', 'personalizationRequired',
+  'materials',
+  // SEO
+  'tags', 'tagCount',
+  // seller authority
+  'shopName', 'shopUrl', 'shopTotalSales', 'starSeller', 'shopLocation',
+  // ratings
+  'rating', 'reviewCount', 'shopReviewCount', 'reviewsCaptured',
+  // derived trend metrics (see common/metrics.js)
+  'firstScrapedAt', 'lastScrapedAt', 'snapshotCount', 'daysTracked',
+  'daysSinceListed', 'favoritesDelta', 'favoritesPerDay',
+  'favoritesPerDayLifetime', 'reviewsDelta', 'reviewsPerDay',
+  'demandScore', 'momentumScore', 'competitiveGapScore', 'opportunityScore',
+  'scrapedAt',
+];
+
+/** One row per captured review. */
+export const REVIEW_FIELDS = [
+  'listingId', 'listingTitle', 'reviewer', 'rating', 'date', 'comment',
+  'photoCount', 'photos', 'variation', 'scrapedAt',
+];
+
+/** Datasets the UI can preview and export. */
+export const DATASETS = {
+  search: 'search',
+  details: 'details',
+  reviews: 'reviews',
+  all: 'all',
+};
+
 export const RUN_STATUS = {
   IDLE: 'idle',
   RUNNING: 'running',
@@ -111,6 +175,9 @@ export const MSG = {
   SCRAPE_ACTIVE_TAB: 'SCRAPE_ACTIVE_TAB',
   STATE_CHANGED: 'STATE_CHANGED',
   PARSE_HTML: 'PARSE_HTML',
+  PARSE_DETAIL: 'PARSE_DETAIL',
+  GET_DETAILS: 'GET_DETAILS',
+  GET_REVIEWS: 'GET_REVIEWS',
   SAVE_SETTINGS: 'SAVE_SETTINGS',
   GET_SETTINGS: 'GET_SETTINGS',
 };
@@ -119,7 +186,12 @@ export const STORAGE_KEYS = {
   settings: 'settings',
   state: 'runState',
   results: 'results',
+  details: 'details',
+  reviews: 'reviews',
+  history: 'history',
 };
+
+export const ETSY_LISTING_URL = 'https://www.etsy.com/listing/';
 
 export const OFFSCREEN_PATH = 'src/offscreen/offscreen.html';
 

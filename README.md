@@ -83,6 +83,12 @@ factor makes possible.
 | `bestsellerOnly` | bool | `false` | Adds `is_best_seller=true` — only badged bestsellers |
 | `freeShippingOnly` | bool | `false` | Adds `free_shipping=true` |
 | `excludeSponsored` | bool | `false` | Discards "Ad by Etsy seller" placements instead of storing them |
+| `scrapeDetails` | bool | `false` | Phase 2: open each collected listing for the deep dataset |
+| `maxDetailListings` | int | `25` | 1–500 listings enriched per run |
+| `detailConcurrency` | int | `2` | 1–4 parallel listing requests |
+| `scrapeReviews` | bool | `true` | Capture reviews rendered on the listing page |
+| `maxReviewsPerListing` | int | `20` | 0–100 |
+| `trackHistory` | bool | `true` | Keep snapshots so velocity can be derived |
 | `engine` | enum | `hybrid` | `fetch`, `tab`, `hybrid` |
 | `minDelayMs` / `maxDelayMs` | int | `1000` / `3000` | Random politeness delay between requests |
 | `stopOnEmptyPage` | bool | `true` | Stop paginating a keyword once a page yields nothing |
@@ -133,6 +139,62 @@ run ends**. The `proxy`, `webRequest` and `webRequestAuthProvider` permissions
 are *optional* and requested only when you tick the box. Because the extension
 already uses your real browser identity, proxies are usually unnecessary.
 
+## Deep listing intelligence (phase 2)
+
+Tick **Open each listing** and the run gains a second phase: every listing the
+search found is opened and mined for the full dataset. This is the slow part —
+one extra page request per listing — hence the separate cap and lower
+concurrency.
+
+Three datasets come out, switchable in the **Dataset** picker and exportable
+separately or as one multi-sheet workbook:
+
+**1. Product intelligence** — `title`, `description`, `price`/`originalPrice`/
+`onSale`, `currency`, `availability`, `mainImage`, `imageCount`, `categoryPath`
+(from the breadcrumb), `listingCreationDate` ("Listed on …"), `favoritesCount`,
+`cartCount`, `quantityAvailable`, `variations` + `variationCount`,
+`isPersonalizable` / `personalizationRequired`, `materials`, `tags`/`tagCount`,
+`shopName`, `shopUrl`, `shopTotalSales`, `starSeller`, `shopLocation`, `rating`,
+`reviewCount`, `shopReviewCount`.
+
+**2. Customer voice** — one row per review: `rating`, `date`, `comment`,
+`reviewer`, `photos` + `photoCount`, and the purchased `variation`. This is the
+dataset worth feeding to an LLM: complaints in reviews are the clearest
+statement of what a competing listing is missing.
+
+**3. Trend / velocity** — derived, not scraped. Every enriched listing appends a
+compact snapshot (favourites, reviews, price, stock) to a local history, and the
+series produces `firstScrapedAt`, `snapshotCount`, `daysTracked`,
+`daysSinceListed`, `favoritesDelta`, `favoritesPerDay`,
+`favoritesPerDayLifetime`, `reviewsDelta`, `reviewsPerDay`, plus four bounded
+0–100 scores: `demandScore`, `momentumScore`, `competitiveGapScore`
+(high price × few reviews = margin with weak proven competition) and a weighted
+`opportunityScore`.
+
+Two rules the metrics follow, and they matter:
+
+- **Velocity needs two observations.** Run the scraper today and
+  `favoritesDelta` is `null` — not `0`. "We don't know yet" and "it gained
+  nothing" are different facts, and conflating them is how you end up trusting a
+  fake trend. Re-run tomorrow on the same keywords and the deltas appear.
+- **Intervals under 6 hours are ignored** for rate calculations, so scraping
+  twice in one sitting cannot manufacture a rocket ship. Snapshots inside a
+  1-hour window overwrite each other instead of accumulating.
+
+`Clear` wipes the exported datasets but **keeps the snapshot history** — that
+history is the baseline the whole velocity feature depends on.
+
+### What Etsy does not publish
+
+Being straight about this, because these are the fields people most often expect:
+
+| Field | Reality |
+|---|---|
+| `viewsCount` | Etsy removed public view counters years ago. The column exists and stays `null` unless a page genuinely exposes one — it is never inferred from something else. |
+| `tags` (the 13) | Not rendered verbatim. We collect the `/market/<term>` links Etsy renders for the listing, which mirror most of a listing's tags, capped at 13. Treat as a close proxy, not the literal tag list. |
+| sales per listing | Only *shop* totals are public (`shopTotalSales`). Per-listing sales are not, so `reviewsPerDay` and `cartCount` are the honest proxies for conversion. |
+| reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (typically the first page) rather than depending on private API shapes. |
+
 ## Output
 
 One row per listing, exactly as specified:
@@ -172,8 +234,15 @@ Notes on normalisation:
 
 **Export:** JSON, JSONL (one object per line, for pipelines), CSV (UTF-8 BOM,
 CRLF, RFC 4180 quoting, formula-injection neutralised), and XLSX (frozen header,
-autofilter) written by a dependency-free ~200-line writer, because MV3 forbids
-loading remote scripts. Or **Copy JSON** to the clipboard.
+autofilter) written by a dependency-free writer, because MV3 forbids loading
+remote scripts. Or **Copy JSON** to the clipboard.
+
+Pick a dataset first, or choose **All datasets** to get one Excel workbook with a
+sheet per dataset (search rows / listing details / reviews) or a single JSON
+object containing all three. CSV and JSONL hold one table each, so they refuse
+"all" rather than silently exporting only part of it. Nested values (`variations`,
+`materials`, `tags`, `photos`) stay real arrays in JSON and are flattened for
+spreadsheets — `Size: A4 | A3; Color: Sage`.
 
 ## Reliability details
 
@@ -202,15 +271,15 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 91 checks, no network and no npm install
+bash tools/run-checks.sh          # 140 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (46) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction, merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, CSV/JSON/JSONL/XLSX serialisation |
-| `tools/check-xlsx.py` (8) | Opens the generated workbook with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter |
-| `tests/dom-check.mjs` (12) | The DOM card parser and the injected content script running in **real headless Chrome** against fixtures: all cards found, sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset` selection, JSON-LD↔DOM merge, challenge detection |
-| `tests/extension-check.mjs` (25) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, GET/SAVE_SETTINGS + GET_STATE + SCRAPE_ACTIVE_TAB + CLEAR_RESULTS round-trips, input validation, filter checkboxes persisting through the worker, offscreen document parsing, and a full run driven to completion |
+| `tests/verify.mjs` (72) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
+| `tests/dom-check.mjs` (21) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge) and listing pages (favourites, cart count, stock, variations, personalisation, materials, tags, shop authority, reviews with photos, review caps), plus challenge detection |
+| `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy
 markup is redistributed. The only leg not covered offline is the HTTP request to

@@ -526,6 +526,119 @@ try {
     }
   });
 
+  await test('offscreen document also parses listing pages (deep scrape)', async () => {
+    const fixture = readFileSync(path.join(root, 'tests/fixtures/etsy-listing-page.html'), 'utf8');
+    const off = await openExtensionPage('src/offscreen/offscreen.html');
+    try {
+      const raw = await off.session.evaluate(`(() => {
+        const html = ${JSON.stringify(fixture)};
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const result = EtsyDetail.parseListingPage({ html, doc, context: {
+          listingId: '1544102938', scrapeReviews: true, maxReviews: 20
+        } });
+        return JSON.stringify({
+          listingId: result.record.listingId,
+          favorites: result.record.favoritesCount,
+          cart: result.record.cartCount,
+          variationCount: result.record.variationCount,
+          tags: result.record.tagCount,
+          shopSales: result.record.shopTotalSales,
+          reviews: result.reviews.length,
+          firstReviewRating: result.reviews[0].rating
+        });
+      })()`);
+      const out = JSON.parse(raw);
+      assert.equal(out.listingId, '1544102938');
+      assert.equal(out.favorites, 1482);
+      assert.equal(out.cart, 20);
+      assert.equal(out.variationCount, 6);
+      assert.equal(out.tags, 4);
+      assert.equal(out.shopSales, 12345);
+      assert.equal(out.reviews, 3);
+      assert.equal(out.firstReviewRating, 5);
+      assert.deepEqual(off.session.errors, [], off.session.errors.join('\n'));
+    } finally {
+      off.session.close();
+      await closeTarget(off.targetId);
+    }
+  });
+
+  await test('deep-scrape settings round-trip and clamp', async () => {
+    const raw = await ui.evaluate(`(async () => {
+      await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: {
+        queries: ['2026 calendar printable'],
+        scrapeDetails: true, maxDetailListings: 9999, detailConcurrency: 99,
+        maxReviewsPerListing: 500, scrapeReviews: true, trackHistory: true
+      }});
+      return JSON.stringify(await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }));
+    })()`);
+    const { result } = JSON.parse(raw);
+    assert.equal(result.scrapeDetails, true);
+    assert.equal(result.maxDetailListings, 500, 'clamped to the documented maximum');
+    assert.equal(result.detailConcurrency, 4);
+    assert.equal(result.maxReviewsPerListing, 100);
+    assert.equal(result.trackHistory, true);
+  });
+
+  await test('detail and review datasets are addressable from the UI', async () => {
+    const raw = await ui.evaluate(`(async () => JSON.stringify({
+      details: await chrome.runtime.sendMessage({ type: 'GET_DETAILS', limit: 10 }),
+      reviews: await chrome.runtime.sendMessage({ type: 'GET_REVIEWS', limit: 10 }),
+      state: await chrome.runtime.sendMessage({ type: 'GET_STATE' })
+    }))()`);
+    const { details, reviews, state } = JSON.parse(raw);
+    assert.equal(details.ok, true, JSON.stringify(details));
+    assert.equal(details.result.total, 0);
+    assert.equal(reviews.ok, true);
+    assert.equal(reviews.result.total, 0);
+    assert.equal(state.result.detailCount, 0);
+    assert.equal(state.result.reviewCount, 0);
+    assert.ok(state.result.history, 'history stats missing from run state');
+    assert.equal(state.result.history.listings, 0);
+  });
+
+  await test('dataset picker offers every dataset and drives the preview', async () => {
+    const raw = await ui.evaluate(`(async () => {
+      const select = document.getElementById('dataset');
+      const options = [...select.options].map(o => o.value);
+      select.value = 'details';
+      select.dispatchEvent(new Event('change'));
+      await new Promise(r => setTimeout(r, 400));
+      return JSON.stringify({
+        options,
+        headers: [...document.querySelectorAll('#previewHead th')].map(th => th.textContent),
+        hint: document.getElementById('previewHint').textContent
+      });
+    })()`);
+    const out = JSON.parse(raw);
+    assert.deepEqual(out.options, ['search', 'details', 'reviews', 'all']);
+    assert.ok(out.headers.includes('Favs/day'), `detail columns expected, got ${out.headers}`);
+    assert.ok(out.headers.includes('Opp'));
+    assert.match(out.hint, /Deep listing intelligence/, 'empty state should explain itself');
+  });
+
+  await test('multi-sheet workbook builds inside the extension page', async () => {
+    const raw = await ui.evaluate(`(async () => {
+      const { toWorkbook } = await import('/src/ui/export.js');
+      const blob = toWorkbook({
+        search: [{ listingId: '1', title: 'a', query: 'q', page: 1, position: 1 }],
+        details: [{ listingId: '1', title: 'a', materials: ['x', 'y'], favoritesPerDay: 3 }],
+        reviews: [{ listingId: '1', rating: 5, comment: 'great' }]
+      });
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      const text = new TextDecoder().decode(bytes);
+      return JSON.stringify({
+        zip: bytes[0] === 0x50 && bytes[1] === 0x4b,
+        sheets: (text.match(/worksheets\\/sheet\\d+\\.xml/g) || []).length,
+        flattened: text.includes('x; y')
+      });
+    })()`);
+    const out = JSON.parse(raw);
+    assert.equal(out.zip, true);
+    assert.ok(out.sheets >= 3, `expected 3 worksheet parts, saw ${out.sheets}`);
+    assert.equal(out.flattened, true, 'array values must be flattened for Excel');
+  });
+
   await test('URL builder runs inside the extension and targets Etsy search', async () => {
     const url = await ui.evaluate(`(async () => {
       const { buildSearchUrl } = await import('/src/common/url-builder.js');

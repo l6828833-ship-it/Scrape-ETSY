@@ -154,9 +154,10 @@ rot is visible in the data rather than silent.
 
 ## 8. Deliberate limitations
 
-- **Search pages only.** No listing-detail fan-out (variations, stock, tags,
-  full description). The schema is the brief's schema; enriching it would mean a
-  second request per listing and a much slower, more conspicuous run.
+- **Listing detail is opt-in and capped.** Phase 2 costs one page request per
+  listing, so it is off by default, has its own lower concurrency, and stops at
+  `maxDetailListings`. A 10-keyword × 5-page search is 50 requests; enriching
+  every result would be ~3200.
 - **`shipTo` filters, it does not price shipping.** Etsy computes real shipping
   cost per destination on the listing page; the search grid only tells us
   whether shipping is free.
@@ -184,3 +185,71 @@ rot is visible in the data rather than silent.
   surface-agnostic.
 - **A different output sink:** implement one function returning a `Blob` and add
   it to `FORMATS` in `ui/export.js`; the button wiring is data-driven.
+
+
+## 10. Phase 2: deep listing intelligence
+
+```
+search phase (queries x pages)          detail phase (listings)
+  scheduler -> workers -> rows            queue  -> workers -> details
+       |                                    |                    |
+       +--> ctx.collected (ordered ids) ----+                    +--> reviews
+                                                                 +--> history
+                                                                        |
+                                                          metrics.js ---+--> scores
+```
+
+The two phases are sequential on purpose: phase 2's queue is exactly the listings
+phase 1 discovered, in search-result order, so the cap keeps the highest-ranked
+listings rather than an arbitrary slice. Everything else is shared — the same
+politeness delays, the same retry/backoff ladder, the same block detection and
+per-run escalation to the tab engine.
+
+One asymmetry worth knowing: a listing page's JSON-LD carries title,
+description, price and rating, but favourites, cart count, stock, variations,
+personalisation and reviews exist **only** in the rendered DOM. So when the
+`fetch` transport has no offscreen document available, hybrid runs upgrade the
+detail phase to a real tab rather than quietly returning sparse records, and a
+`fetch`-only run logs a warning naming exactly which fields will be missing.
+
+### Why history is a separate store
+
+`store.js` holds what the current run produced; `history.js` holds what we have
+ever observed. They have different lifecycles: "Clear results" empties the former
+so the next export is clean, and deliberately leaves the latter alone, because
+deleting it would reset every velocity metric to `null` and silently destroy the
+only data that cannot be re-scraped after the fact.
+
+Snapshots are stored as tuples (`[ts, favorites, reviewCount, price, quantity]`)
+keyed by listing id. With object keys, per-snapshot JSON overhead would exceed
+the payload; this file is the one that grows monotonically across runs, so it is
+capped at 60 snapshots per listing (oldest pruned) with LRU eviction of whole
+listings at the ceiling.
+
+### Metric honesty rules
+
+`metrics.js` is pure and has no notion of Etsy — it only turns a snapshot series
+into numbers, under two constraints that exist to stop the feature from lying:
+
+1. **`null` is not `0`.** A first observation yields `favoritesDelta: null`.
+   `Number(null) === 0` in JavaScript, which made this the one bug the test suite
+   caught in review: an `isFinite` check quietly converted "never seen" into
+   "zero growth". Everything now goes through an explicit `isNum()` guard.
+2. **Rates need a real interval.** Comparison snapshots must be at least
+   `MIN_INTERVAL_HOURS` (6) apart, and the comparison walks *backwards* past any
+   too-recent snapshots rather than giving up, so a mid-day re-run does not blank
+   out yesterday's baseline.
+
+Scores are bounded 0–100 heuristics for ranking, with log saturation so the first
+few favourites move the needle more than the four-thousandth. `opportunityScore`
+re-normalises across whichever signals exist, so a listing observed once is not
+penalised for having no momentum data — a listing measured at genuinely zero
+growth scores lower than one never measured, which is the correct ordering.
+
+### Reviews as a child table
+
+Reviews are one-to-many, which is why exports are dataset-oriented rather than
+one flat sheet: joining them into listing rows would either duplicate every
+listing field per review or bury review text in a single cell. Re-scraping a
+listing replaces its reviews (`dropReviewsFor` then insert) instead of appending,
+so repeat runs do not accumulate duplicates of the same comment.
