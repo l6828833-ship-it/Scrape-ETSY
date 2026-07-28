@@ -58,9 +58,21 @@ export function offscreenAvailable() {
  * @returns {Promise<object>} EtsyParse.parsePage() result
  */
 export async function parseHtmlOffscreen(html, context) {
+  return sendToOffscreen(MSG.PARSE_HTML, html, context);
+}
+
+/**
+ * Parse a listing (detail) page in the offscreen document.
+ * @returns {Promise<object>} EtsyDetail.parseListingPage() result
+ */
+export async function parseDetailOffscreen(html, context) {
+  return sendToOffscreen(MSG.PARSE_DETAIL, html, context);
+}
+
+async function sendToOffscreen(type, html, context) {
   await ensureOffscreen();
   const response = await chrome.runtime.sendMessage({
-    type: MSG.PARSE_HTML,
+    type,
     target: 'offscreen',
     html,
     context,

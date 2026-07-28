@@ -152,14 +152,36 @@ function sheetXml(headers, rows) {
   return parts.join('');
 }
 
+function safeSheetName(name, index) {
+  const cleaned = String(name || `Sheet${index + 1}`)
+    .replace(/[[\]:*?/\\]/g, ' ')
+    .slice(0, 31)
+    .trim();
+  return escapeXml(cleaned || `Sheet${index + 1}`);
+}
+
 /**
- * @param {Array<object>} rows
- * @param {string[]} fields column order (object keys)
- * @param {string} [sheetName]
+ * Build a workbook with one worksheet per entry.
+ * @param {Array<{name:string, fields:string[], rows:Array<object>}>} sheets
  * @returns {Blob} xlsx workbook
  */
-export function rowsToXlsx(rows, fields, sheetName = 'Etsy listings') {
-  const safeName = escapeXml(String(sheetName).slice(0, 31).replace(/[[\]:*?/\\]/g, ' '));
+export function rowsToWorkbook(sheets) {
+  const list = (sheets || []).filter(Boolean);
+  if (!list.length) throw new Error('rowsToWorkbook: at least one sheet is required');
+
+  const overrides = list
+    .map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml"`
+      + ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>')
+    .join('');
+  const sheetTags = list
+    .map((sheet, i) => `<sheet name="${safeSheetName(sheet.name, i)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`)
+    .join('');
+  const rels = list
+    .map((_, i) => `<Relationship Id="rId${i + 1}"`
+      + ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"'
+      + ` Target="worksheets/sheet${i + 1}.xml"/>`)
+    .join('');
+
   const files = [
     {
       name: '[Content_Types].xml',
@@ -168,7 +190,7 @@ export function rowsToXlsx(rows, fields, sheetName = 'Etsy listings') {
         + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         + '<Default Extension="xml" ContentType="application/xml"/>'
         + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-        + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        + overrides
         + '</Types>'),
     },
     {
@@ -183,22 +205,33 @@ export function rowsToXlsx(rows, fields, sheetName = 'Etsy listings') {
       data: encoder.encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
         + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        + `<sheets><sheet name="${safeName}" sheetId="1" r:id="rId1"/></sheets>`
+        + `<sheets>${sheetTags}</sheets>`
         + '</workbook>'),
     },
     {
       name: 'xl/_rels/workbook.xml.rels',
       data: encoder.encode('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        + rels
         + '</Relationships>'),
     },
-    {
-      name: 'xl/worksheets/sheet1.xml',
-      data: encoder.encode(sheetXml(fields, rows)),
-    },
+    ...list.map((sheet, i) => ({
+      name: `xl/worksheets/sheet${i + 1}.xml`,
+      data: encoder.encode(sheetXml(sheet.fields, sheet.rows)),
+    })),
   ];
   return makeZip(files);
 }
 
-export const __testing = { crc32, makeZip, sheetXml, colName, escapeXml };
+/**
+ * Single-sheet convenience wrapper.
+ * @param {Array<object>} rows
+ * @param {string[]} fields column order (object keys)
+ * @param {string} [sheetName]
+ * @returns {Blob} xlsx workbook
+ */
+export function rowsToXlsx(rows, fields, sheetName = 'Etsy listings') {
+  return rowsToWorkbook([{ name: sheetName, fields, rows }]);
+}
+
+export const __testing = { crc32, makeZip, sheetXml, colName, escapeXml, safeSheetName };

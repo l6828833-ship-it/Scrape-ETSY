@@ -82,6 +82,42 @@
           </label>
         </div>
 
+        <details id="deep" class="advanced">
+          <summary>Deep listing intelligence (phase 2)</summary>
+          <label class="check">
+            <input id="scrapeDetails" type="checkbox" />
+            <span><strong>Open each listing</strong> for the full dataset — favourites, stock,
+              variations, materials, shop authority, reviews</span>
+          </label>
+          <div class="grid">
+            <label class="field">
+              <span class="label">Max listings</span>
+              <input id="maxDetailListings" type="number" min="1" max="500" step="1" />
+            </label>
+            <label class="field">
+              <span class="label">Detail concurrency</span>
+              <input id="detailConcurrency" type="number" min="1" max="4" step="1" />
+            </label>
+            <label class="field">
+              <span class="label">Reviews / listing</span>
+              <input id="maxReviewsPerListing" type="number" min="0" max="100" step="1" />
+            </label>
+          </div>
+          <label class="check">
+            <input id="scrapeReviews" type="checkbox" />
+            <span>Capture review text, ratings, dates and photos</span>
+          </label>
+          <label class="check">
+            <input id="trackHistory" type="checkbox" />
+            <span>Keep snapshots to derive growth velocity
+              (<code>favoritesDelta</code>, <code>favoritesPerDay</code>)</span>
+          </label>
+          <p class="warn" id="deepCost">
+            Each listing is one extra page request, so this phase is the slow one. Velocity fields
+            stay <code>null</code> until the same listing has been seen twice, at least 6 hours apart.
+          </p>
+        </details>
+
         <details id="advanced" class="advanced">
           <summary>Advanced</summary>
           <div class="grid">
@@ -187,6 +223,9 @@
           <div><dt>Ads skipped</dt><dd id="statAds">0</dd></div>
           <div><dt>Retries</dt><dd id="statRetries">0</dd></div>
           <div><dt>Blocks</dt><dd id="statBlocks">0</dd></div>
+          <div><dt>Details</dt><dd id="statDetails">0 / 0</dd></div>
+          <div><dt>Reviews</dt><dd id="statReviews">0</dd></div>
+          <div><dt>Tracked</dt><dd id="statTracked">0</dd></div>
         </dl>
 
         <p id="activeList" class="active-list" hidden></p>
@@ -201,6 +240,16 @@
           Results <span id="rowCount" class="pill">0 rows</span>
         </h2>
 
+        <label class="field dataset-picker">
+          <span class="label">Dataset</span>
+          <select id="dataset">
+            <option value="search">Search rows</option>
+            <option value="details">Listing details</option>
+            <option value="reviews">Reviews</option>
+            <option value="all">All datasets (Excel / JSON)</option>
+          </select>
+        </label>
+
         <div class="actions">
           <button data-export="json" class="btn btn-ghost" type="button">JSON</button>
           <button data-export="jsonl" class="btn btn-ghost" type="button">JSONL</button>
@@ -212,7 +261,7 @@
 
         <div class="table-wrap">
           <table class="preview">
-            <thead>
+            <thead id="previewHead">
               <tr>
                 <th>#</th><th>Query</th><th>P</th><th>Title</th><th>Price</th>
                 <th>Shop</th><th>Rating</th><th>Reviews</th><th>Flags</th>

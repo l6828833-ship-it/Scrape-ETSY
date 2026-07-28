@@ -26,8 +26,9 @@ EXPECTED_HEADERS = [
     "bestseller", "sponsored", "scrapedAt",
 ]
 
-path = Path(sys.argv[1] if len(sys.argv) > 1
-            else Path(__file__).resolve().parent.parent / "tests/out/sample.xlsx")
+ROOT = Path(__file__).resolve().parent.parent
+path = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "tests/out/sample.xlsx"
+workbook_path = ROOT / "tests/out/sample-workbook.xlsx"
 
 if not path.exists():
     sys.exit(f"missing {path} — run `node tests/verify.mjs` first")
@@ -79,5 +80,52 @@ with zipfile.ZipFile(path) as zf:
     print(f"  row 2  : {', '.join(str(v) for v in first[:6])} …")
     print(f"  rows   : {len(rows) - 1} data row(s)")
 
-print(f"\n{'✗ ' + str(len(failures)) + ' check(s) failed' if failures else '✓ workbook is valid'}")
+
+# The deep-scrape export writes one sheet per dataset into a single workbook.
+if workbook_path.exists():
+    print(f"\nValidating {workbook_path.name} ({workbook_path.stat().st_size} bytes)")
+    with zipfile.ZipFile(workbook_path) as zf:
+        check("multi-sheet ZIP is intact (all CRCs valid)", zf.testzip() is None, "corrupt entry")
+
+        workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+        names = [s.get("name") for s in workbook.findall(".//s:sheet", NS)]
+        check("declares one sheet per dataset", len(names) == 3, f"found {names}")
+        check("sheets are named after their datasets",
+              names == ["Search rows", "Listing details", "Reviews"], f"got {names}")
+
+        rel_root = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+        targets = sorted(r.get("Target") for r in rel_root)
+        expected = sorted(f"worksheets/sheet{i}.xml" for i in (1, 2, 3))
+        check("every sheet is wired to a relationship", targets == expected, f"got {targets}")
+        check("all worksheet parts are present",
+              all(f"xl/worksheets/sheet{i}.xml" in zf.namelist() for i in (1, 2, 3)))
+
+        detail_sheet = ET.fromstring(zf.read("xl/worksheets/sheet2.xml"))
+        detail_rows = detail_sheet.findall(".//s:sheetData/s:row", NS)
+        check("listing-details sheet has data", len(detail_rows) >= 2, f"{len(detail_rows)} row(s)")
+
+        def cells(row):
+            out = []
+            for c in row.findall("s:c", NS):
+                inline = c.find("s:is/s:t", NS)
+                v = c.find("s:v", NS)
+                out.append(inline.text if inline is not None
+                           else (v.text if v is not None else None))
+            return out
+
+        headers = cells(detail_rows[0])
+        values = cells(detail_rows[1])
+        row_map = dict(zip(headers, values))
+        check("nested lists are flattened into cells",
+              row_map.get("materials") == "Recycled paper; Archival ink",
+              f"materials={row_map.get('materials')!r}")
+        check("variation groups are human readable",
+              row_map.get("variations") == "Size: A4 | A3; Color: Sage",
+              f"variations={row_map.get('variations')!r}")
+        check("velocity columns survive the round-trip",
+              row_map.get("favoritesPerDay") == "15" and row_map.get("opportunityScore") == "71",
+              f"favoritesPerDay={row_map.get('favoritesPerDay')!r}")
+        print(f"\n  sheets : {', '.join(names)}")
+
+print(f"\n{'✗ ' + str(len(failures)) + ' check(s) failed' if failures else '✓ workbook(s) are valid'}")
 sys.exit(1 if failures else 0)
