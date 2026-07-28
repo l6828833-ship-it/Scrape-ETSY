@@ -441,6 +441,71 @@ await test('parses compact numbers, percentages and N/A', () => {
   assert.equal(EH.parseCompactNumber('1,234'), 1234);
   assert.equal(EH.parseCompactNumber('N/A'), null, 'N/A must not become 0');
   assert.equal(EH.parseCompactNumber(''), null);
+});
+
+await test('two numbers in one cell yield null, never a splice of both', () => {
+  // The exact contamination seen in EHunt's real panel: the cell holds the value
+  // and its period delta. Stripping whitespace spliced them into one number, so
+  // Total Sales 68 (delta 6) became 686 and Store Sales 775 (delta 43) became
+  // 77543. Ambiguity must produce a gap, not a fabricated figure.
+  assert.equal(EH.parseCompactNumber('68 6'), null);
+  assert.equal(EH.parseCompactNumber('775 43'), null);
+  assert.equal(EH.parseCompactNumber('51 4.5'), null);
+  assert.equal(EH.parseCompactNumber(' 7 3'), null);
+  // Single values, including grouped ones, still parse.
+  assert.equal(EH.parseCompactNumber('68'), 68);
+  assert.equal(EH.parseCompactNumber('1,234'), 1234);
+  assert.equal(EH.parseCompactNumber('-12'), -12, 'a signed delta stays signed');
+});
+
+await test('the price line separates sale price from discount', () => {
+  const p = EH.parsePriceLine('USD  Price:0.91  USD  1.82  50% off');
+  assert.equal(p.ehuntPrice, 0.91);
+  assert.equal(p.ehuntDiscountPercent, 50, 'the 50 is a percentage, not a price');
+  assert.equal(p.ehuntCurrency, 'USD');
+  assert.equal(p.ehuntOriginalPrice, undefined,
+    'the original price is identified by its strike-through, not by being larger');
+
+  const plain = EH.parsePriceLine('USD Price:4.20');
+  assert.equal(plain.ehuntPrice, 4.2);
+  assert.equal(plain.ehuntOriginalPrice, undefined, 'no sale, so no original price');
+  assert.equal(plain.ehuntDiscountPercent, undefined);
+});
+
+await test('thousands separators do not split a price in two', () => {
+  // "1,234.56" read as two amounts turned a $1,234.56 listing into $1.23 with a
+  // $56 "original price". Every four-figure listing hit it.
+  const p = EH.parsePriceLine('USD  Price:1,234.56');
+  assert.equal(p.ehuntPrice, 1234.56);
+  assert.equal(p.ehuntOriginalPrice, undefined);
+  assert.equal(EH.parseAmount('1,234.56'), 1234.56);
+  assert.equal(EH.parseAmount('12,345'), 12345);
+  assert.equal(EH.parseAmount('0.91'), 0.91);
+});
+
+await test('a price range does not become a fabricated discount', () => {
+  // Two figures side by side can be a range ("5.00 - 12.00"). Without a
+  // strike-through there is no evidence the larger one was ever the price.
+  const p = EH.parsePriceLine('USD Price:5.00 USD 12.00');
+  assert.equal(p.ehuntPrice, 5);
+  assert.equal(p.ehuntOriginalPrice, undefined);
+  assert.equal(p.ehuntDiscountPercent, undefined);
+});
+
+await test('"% OFF" is not mistaken for a currency code', () => {
+  const p = EH.parsePriceLine('USD Price:0.91 15% OFF');
+  assert.equal(p.ehuntCurrency, 'USD', 'not "OFF"');
+  assert.equal(p.ehuntDiscountPercent, 15);
+  assert.equal(p.ehuntPrice, 0.91);
+});
+
+await test('"Other Data" yields the badge and the stock level', () => {
+  const d = EH.parseOtherData('BestSeller Stocks : 57');
+  assert.equal(d.ehuntBestSeller, true);
+  assert.equal(d.ehuntStock, 57);
+  const none = EH.parseOtherData('');
+  assert.equal(none.ehuntBestSeller, undefined, 'absence is not false-as-fact here');
+  assert.equal(none.ehuntStock, undefined);
   assert.equal(EH.parsePercent('10.29%'), 10.29);
   assert.equal(EH.parsePercent('N/A'), null);
   assert.equal(EH.parseIsoDate('2026-02-02'), '2026-02-02');
@@ -812,6 +877,17 @@ await test('reads the breadcrumb category path', () => {
   assert.equal(ld.categoryPath, 'Home & Living > Office > Calendars & Planners');
 });
 
+await test('the panel exclusion list keeps up with the panel selectors', () => {
+  // Two modules name EHunt's container: ehunt-parse to find it, detail-parse to
+  // cut it out of Etsy's page text. If they drift apart the failure is quiet —
+  // the panel is still read, so ehuntPanel stays true, while its labels leak back
+  // into Etsy fields. This pins them together.
+  for (const sel of EH.SELECTORS.panel) {
+    assert.ok(D.THIRD_PARTY_PANELS.includes(sel),
+      `ehunt-parse looks for ${sel} but detail-parse does not exclude it`);
+  }
+});
+
 await test('detail records always carry the documented schema', () => {
   const record = D.finalizeDetail(D.fromJsonLd(listingHtml), {}, {
     scrapedAt: '2026-05-13T04:35:22Z',
@@ -819,11 +895,13 @@ await test('detail records always carry the documented schema', () => {
   for (const field of DETAIL_FIELDS) {
     // Fields contributed by later stages: metrics.js (history/scores) and the
     // optional EHunt / API enrichment. Exports fill any absent key with null.
+    // Every `ehunt*` column is by definition supplied only when that panel was
+    // read, so they are exempted as a group rather than one at a time.
+    if (field.startsWith('ehunt')) continue;
     if (['firstScrapedAt', 'lastScrapedAt', 'snapshotCount', 'daysTracked', 'daysSinceListed',
       'favoritesDelta', 'favoritesPerDay', 'favoritesPerDayLifetime', 'reviewsDelta',
       'reviewsPerDay', 'demandScore', 'momentumScore', 'competitiveGapScore',
-      'opportunityScore', 'tagVolumes', 'ehuntEstimatedSales', 'ehuntEstimatedRevenue',
-      'ehuntConversionRate', 'ehuntReviewRatio', 'ehuntPanel'].includes(field)) continue;
+      'opportunityScore', 'tagVolumes'].includes(field)) continue;
     assert.ok(Object.prototype.hasOwnProperty.call(record, field), `missing field: ${field}`);
   }
   assert.equal(record.isPersonalizable, false, 'booleans never null');

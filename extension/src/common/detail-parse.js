@@ -144,10 +144,52 @@
     return Number.isFinite(n) ? n : null;
   }
 
-  /** Whole-page text, used for the many facts Etsy only renders as copy. */
+  /**
+   * Containers that other extensions inject into Etsy's page.
+   *
+   * Declared here rather than imported from ehunt-parse.js so this module stays
+   * standalone (it is injected on its own, and load order is not guaranteed).
+   */
+  const THIRD_PARTY_PANELS = [
+    '#etsy-rank-tool-product-table',
+    '.eh-product-detail',
+    '.eh-exe-tags-list',
+    '[class*="eh-product-detail"]',
+    '[class*="eh-exe-"]',
+    '[id*="rank-tool" i]',
+  ];
+
+  /**
+   * Whole-page text, used for the many facts Etsy only renders as copy.
+   *
+   * Third-party panels are cut out first. When EHunt is running, its own table
+   * sits in the same body and its labels read exactly like Etsy copy: its
+   * "Ships From / United States / Other Data" cells turned shopLocation into
+   * "United States Other Data", and "Store Sales 775" is indistinguishable from
+   * an Etsy sales line. Every regex over this blob would otherwise be quoting a
+   * third-party panel back as an Etsy fact.
+   */
   function pageText(doc) {
     const body = doc && (doc.body || doc.documentElement);
-    return text(body);
+    if (!body) return '';
+    let clone;
+    try {
+      clone = body.cloneNode(true);
+    } catch (_) {
+      return text(body);
+    }
+    for (const sel of THIRD_PARTY_PANELS) {
+      let nodes;
+      try {
+        nodes = clone.querySelectorAll(sel);
+      } catch (_) {
+        continue;
+      }
+      for (const node of nodes) {
+        if (node.parentNode) node.parentNode.removeChild(node);
+      }
+    }
+    return text(clone);
   }
 
   /** "Jan 12, 2026" / "12 January 2026" / ISO -> ISO date string (no time). */
@@ -1069,6 +1111,7 @@
     readShopAgeMonths,
     readTags,
     describeTagSources,
+    THIRD_PARTY_PANELS,
     fromJsonLd,
     reviewsFromJsonLd,
     mergeReviews,

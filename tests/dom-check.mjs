@@ -861,6 +861,77 @@ try {
       assert.equal(out.merged.tags.length, 13);
     });
 
+    await test('a growth delta never contaminates the figure it sits beside', () => {
+      // The bug this pins: EHunt renders a period-over-period delta inside the
+      // same cell as the value, so reading the cell wholesale concatenated them.
+      // Total Sales 68 with a delta of 6 became 686; Store Sales 775 with 43
+      // became 77543, and that then gap-filled shopTotalSales as an Etsy fact.
+      assert.equal(out.panel.ehuntEstimatedSales, 68, 'not 686');
+      assert.equal(out.panel.ehuntShopSales, 775, 'not 77543');
+      assert.equal(out.panel.ehuntTotalReviews, 7, 'not 73');
+      assert.equal(out.panel.ehuntTotalFavorites, 11, 'not 111');
+      assert.equal(out.panel.ehuntEstimatedRevenue, 51, 'not 515');
+      assert.equal(out.merged.shopTotalSales, 775);
+      assert.equal(out.merged.favoritesCount, 11);
+    });
+
+    await test('deltas are exported only when their direction is stated', () => {
+      // Direction lives solely in the arrow's colour. Total Revenue's delta has
+      // no arrow, so "4.5" could be a rise or a fall and is dropped.
+      assert.equal(out.panel.ehuntSalesGrowth, 6, 'green arrow: a rise');
+      assert.equal(out.panel.ehuntReviewsGrowth, 3);
+      assert.equal(out.panel.ehuntFavoritesGrowth, 1);
+      assert.equal(out.panel.ehuntShopSalesGrowth, 43);
+      assert.equal(out.panel.ehuntRevenueGrowth, undefined,
+        'no arrow means no direction, so no claim');
+    });
+
+    await test('reads the price line, badges and stock', () => {
+      assert.equal(out.panel.ehuntPrice, 0.91);
+      assert.equal(out.panel.ehuntOriginalPrice, 1.82, 'the struck-through figure');
+      assert.equal(out.panel.ehuntDiscountPercent, 50, '"50% off", not a price');
+      assert.equal(out.panel.ehuntCurrency, 'USD');
+      assert.equal(out.panel.ehuntBestSeller, true);
+      assert.equal(out.panel.ehuntStock, 57);
+    });
+
+    await test('EHunt stock never enters the trend-tracked quantity column', () => {
+      // metrics.js snapshots quantityAvailable into the trend history. The panel
+      // is present on some runs and not others, so letting it fill that column
+      // would alternate two independently-derived numbers and manufacture stock
+      // movement — in the one feature meant to detect real movement.
+      assert.equal(out.merged.quantityAvailable, null);
+      assert.equal(out.merged.ehuntStock, 57, 'still available under its own name');
+    });
+
+    await test('the rating beside the store name is the shop\'s, not the listing\'s', () => {
+      assert.equal(out.panel.ehuntShopRating, 4.94);
+      assert.notEqual(out.merged.rating, 4.94,
+        'a shop rating must never be reported as this listing\'s rating');
+    });
+
+    await test('the deeper EHunt category fills an Etsy gap', () => {
+      assert.equal(out.merged.categoryPath,
+        'Paper & Party Supplies > Paper > Stationery > Design & Templates > Templates > Planner Templates',
+        'six levels, where Etsy\'s breadcrumb shows three');
+      // Ships-from is a country while Etsy states a city and state, so the two
+      // are not interchangeable and stay in separate columns.
+      assert.equal(out.merged.ehuntShipsFrom, 'United States');
+      assert.equal(out.merged.shopLocation, null);
+    });
+
+    await test('the original price comes from the strike-through element', () => {
+      assert.equal(out.panel.ehuntOriginalPrice, 1.82);
+      assert.equal(out.panel.ehuntPrice, 0.91);
+    });
+
+    await test('Etsy\'s own price is never replaced by EHunt\'s USD figure', () => {
+      // EHunt normalises to USD, so merging it would mix currencies on a
+      // non-USD listing. The two are reported side by side instead.
+      assert.equal(out.merged.price, 0.91, 'from the Etsy page itself');
+      assert.equal(out.merged.ehuntPrice, 0.91);
+    });
+
     await test('reads the stats table incl. product type', () => {
       assert.equal(out.panel.isDigital, true);
       assert.equal(out.panel.productType, 'Digital');
@@ -877,6 +948,29 @@ try {
       assert.equal(out.panel.ehuntTotalViews, undefined, 'Total Views was N/A');
       assert.equal(out.panel.ehuntConversionRate, undefined, 'Avg.Conv.Rate was N/A');
       assert.notEqual(out.merged.viewsCount, 0, 'a gap must never be filled with 0');
+    });
+
+    await test('EHunt\'s panel text is not read as Etsy page copy', async () => {
+      // EHunt injects into the same body, and its table labels read exactly like
+      // Etsy copy. Its "Ships From | United States | Other Data" cells turned
+      // shopLocation into "United States Other Data", and its "Store Sales 775"
+      // line is indistinguishable from an Etsy sales figure. The panel is cut out
+      // of the text blob before any of those regexes run.
+      const etsyOnly = JSON.parse(await session.evaluate(`JSON.stringify(
+        EtsyDetail.parseListingPage({
+          html: document.documentElement.outerHTML, doc: document,
+          context: { listingId: '4451164796', scrapeReviews: false }
+        }).record)`));
+      assert.equal(etsyOnly.shopLocation, null,
+        'this Etsy page states no location; only EHunt did');
+      assert.equal(etsyOnly.shopTotalSales, null,
+        '"Store Sales 775" belongs to EHunt, not to Etsy');
+      assert.equal(etsyOnly.listingCreationDate, null,
+        "EHunt's Release Time is not Etsy's 'Listed on' line");
+      assert.equal(etsyOnly.isDigital, true,
+        'EHunt\'s "Ships From" label previously flipped this digital listing to physical');
+      assert.match(etsyOnly.description, /Our 2026 August Calendar/,
+        'genuine Etsy copy is untouched');
     });
 
     await test('the merged record keeps Etsy-observed values', () => {
