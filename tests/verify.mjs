@@ -475,6 +475,18 @@ await test('reads the Product node', () => {
     'tracking params stripped');
 });
 
+await test('every requested intelligence field is in the schema', () => {
+  // The fields asked for, mapped to the column that carries them.
+  const required = [
+    'tags', 'tagCount', 'favoritesCount', 'viewsCount', 'shopTotalSales',
+    'quantityAvailable', 'availability', 'isStarSeller', 'description',
+    'materials', 'variations', 'variationCount', 'categoryPath',
+    'isPersonalizable', 'freeShipping', 'shopMemberSince', 'shopLocation',
+  ];
+  const missing = required.filter((f) => !DETAIL_FIELDS.includes(f));
+  assert.deepEqual(missing, [], `absent from DETAIL_FIELDS: ${missing.join(', ')}`);
+});
+
 await test('reads the breadcrumb category path', () => {
   const ld = D.fromJsonLd(listingHtml);
   assert.equal(ld.categoryPath, 'Home & Living > Office > Calendars & Planners');
@@ -492,7 +504,9 @@ await test('detail records always carry the documented schema', () => {
     assert.ok(Object.prototype.hasOwnProperty.call(record, field), `missing field: ${field}`);
   }
   assert.equal(record.isPersonalizable, false, 'booleans never null');
-  assert.equal(record.starSeller, false);
+  assert.equal(record.isStarSeller, false);
+  assert.equal(record.freeShipping, false);
+  assert.equal(record.shopMemberSince, null, 'unknown until the DOM is parsed');
   assert.equal(record.reviewsCaptured, 0);
   assert.equal(record.scrapedAt, '2026-05-13T04:35:22Z');
 });
