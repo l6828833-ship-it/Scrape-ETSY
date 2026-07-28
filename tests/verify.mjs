@@ -402,6 +402,46 @@ await test('dedupe per_query keeps the same listing across different queries', (
   assert.equal(b.kept.length, 1, 'other query gets its own namespace');
 });
 
+group('Deep-scrape gap reporting');
+
+await test('names the key fields that came back empty', () => {
+  const full = {
+    description: 'text', favoritesCount: 10, shopTotalSales: 5,
+    tags: ['a'], quantityAvailable: 3,
+  };
+  assert.deepEqual(runnerTesting.missingDetailFields(full), []);
+  assert.deepEqual(
+    runnerTesting.missingDetailFields({ ...full, description: null, tags: [] }),
+    ['description', 'tags'],
+    'empty arrays count as missing, not as data',
+  );
+  assert.deepEqual(runnerTesting.missingDetailFields({}).length, 5);
+});
+
+await test('a captured zero is data, not a gap', () => {
+  const missing = runnerTesting.missingDetailFields({
+    description: 'text', favoritesCount: 0, shopTotalSales: 0,
+    tags: ['a'], quantityAvailable: 0,
+  });
+  assert.deepEqual(missing, [], '0 favourites is a real observation');
+});
+
+await test('the run log surfaces gaps instead of claiming success', () => {
+  const line = runnerTesting.describeDetail({
+    favoritesCount: 1482, description: null, shopTotalSales: null,
+    tags: ['a'], quantityAvailable: 4,
+  });
+  assert.match(line, /1482 favs/);
+  assert.match(line, /no description\/shop sales/, `unhelpful log line: ${line}`);
+
+  const healthy = runnerTesting.describeDetail({
+    favoritesCount: 12, description: 'x'.repeat(940), shopTotalSales: 5,
+    tags: ['a'], quantityAvailable: 1,
+  });
+  assert.match(healthy, /940 chars desc/);
+  assert.ok(!/\bno \b/.test(healthy), `should report no gaps: ${healthy}`);
+});
+
 group('Ad exclusion');
 
 await test('excludeSponsored drops sponsored rows and counts them', () => {
@@ -509,6 +549,15 @@ await test('detail records always carry the documented schema', () => {
   assert.equal(record.shopMemberSince, null, 'unknown until the DOM is parsed');
   assert.equal(record.reviewsCaptured, 0);
   assert.equal(record.scrapedAt, '2026-05-13T04:35:22Z');
+});
+
+await test('prefers whichever description source has more text', () => {
+  assert.equal(D.pickLongestText(['short', 'a much longer description here']),
+    'a much longer description here');
+  assert.equal(D.pickLongestText([null, '', '   ']), null);
+  assert.equal(D.pickLongestText(['Read more', 'Show less']), null, 'UI chrome is not a description');
+  assert.equal(D.pickLongestText(['  collapsed\n  whitespace  ']), 'collapsed whitespace');
+  assert.equal(D.pickLongestText(['x'.repeat(25000)]).length, 20001, 'capped with an ellipsis');
 });
 
 await test('a blocked listing page yields no record', () => {

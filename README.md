@@ -207,6 +207,28 @@ Being straight about this, because these are the fields people most often expect
 
 | Field | Reality |
 |---|---|
+### If a deep-scrape field comes back empty
+
+The run now tells you. Each listing logs what it found — `1482 favs, 940 chars
+desc, qty 4` — and names anything missing as `no description/shop sales`. At the
+end of the phase you get one summary line, e.g.
+`Deep scrape gaps — empty for: description (25/25)`, plus the likely cause:
+
+- **empty on *every* listing with the fetch engine** — the page was probably not
+  fully rendered; switch the engine to **Tab**, which runs the listing page's own
+  JavaScript.
+- **empty on *every* listing with the tab engine** — Etsy most likely renamed its
+  markup; update the `SELECTORS` table at the top of
+  `extension/src/common/detail-parse.js`. JSON-LD-backed fields keep working
+  meanwhile.
+- **empty on *some* listings** — normal. Not every listing states stock,
+  materials or a personalisation option.
+
+`description` specifically now tries eight containers and then falls back to the
+`og:description` / `meta[name=description]` tags, which survive front-end
+redesigns. Where a page renders a collapsed teaser plus the full text, the longer
+one wins.
+
 | `viewsCount` | Etsy removed public view counters years ago. The column exists and stays `null` unless a page genuinely exposes one — it is never inferred from something else. |
 | `tags` (the 13) | Not rendered verbatim anywhere in the page. We harvest both link shapes that mirror them — `/market/<term>` links and the tag-style `/search?q=<term>` chips under "Explore related searches" — dedupe case-insensitively and cap at 13 (Etsy's own limit). `tagCount` tells you how many were actually recovered, so a listing showing `tagCount: 6` is not claiming to have found all 13. Treat as a close proxy, not the literal tag list. |
 | sales per listing | Only *shop* totals are public (`shopTotalSales`). Per-listing sales are not, so `reviewsPerDay` and `cartCount` are the honest proxies for conversion. |
@@ -312,14 +334,14 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 151 checks, no network and no npm install
+bash tools/run-checks.sh          # 157 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (73) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tests/verify.mjs` (77) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
-| `tests/dom-check.mjs` (31) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
+| `tests/dom-check.mjs` (33) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy
