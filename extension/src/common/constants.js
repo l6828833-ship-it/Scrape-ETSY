@@ -131,11 +131,8 @@ export const DETAIL_FIELDS = [
   'materials',
   // SEO
   'tags', 'tagCount',
-  // shipping incentive
-  'freeShipping',
   // seller authority
-  'shopName', 'shopUrl', 'shopTotalSales', 'isStarSeller', 'shopLocation',
-  'shopMemberSince',
+  'shopName', 'shopUrl', 'shopTotalSales', 'starSeller', 'shopLocation',
   // ratings
   'rating', 'reviewCount', 'shopReviewCount', 'reviewsCaptured',
   // derived trend metrics (see common/metrics.js)

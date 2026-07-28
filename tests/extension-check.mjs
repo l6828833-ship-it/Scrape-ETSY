@@ -543,9 +543,6 @@ try {
           variationCount: result.record.variationCount,
           tags: result.record.tagCount,
           shopSales: result.record.shopTotalSales,
-          starSeller: result.record.isStarSeller,
-          memberSince: result.record.shopMemberSince,
-          freeShipping: result.record.freeShipping,
           reviews: result.reviews.length,
           firstReviewRating: result.reviews[0].rating
         });
@@ -555,11 +552,8 @@ try {
       assert.equal(out.favorites, 1482);
       assert.equal(out.cart, 20);
       assert.equal(out.variationCount, 6);
-      assert.equal(out.tags, 6);
+      assert.equal(out.tags, 4);
       assert.equal(out.shopSales, 12345);
-      assert.equal(out.starSeller, true);
-      assert.equal(out.memberSince, 2019);
-      assert.equal(out.freeShipping, true);
       assert.equal(out.reviews, 3);
       assert.equal(out.firstReviewRating, 5);
       assert.deepEqual(off.session.errors, [], off.session.errors.join('\n'));

@@ -55,13 +55,6 @@
       'textarea[maxlength][id*="personalization"]',
     ],
     shopLink: ['a[href*="/shop/"]'],
-    shippingRegion: [
-      '[data-shipping-and-returns]',
-      '[data-buy-box-region="shipping"]',
-      '[data-selector="shipping-cost"]',
-      '.shipping-section',
-    ],
-    textLine: ['p, span, li, div, address'],
     shopName: ['[data-shop-name]', 'span.wt-text-title-small a[href*="/shop/"]'],
     breadcrumb: ['nav[aria-label="Breadcrumbs"] a', '.breadcrumb a', 'ol[data-breadcrumbs] a'],
     marketLinks: ['a[href*="/market/"]'],
@@ -302,9 +295,6 @@
     const crumbs = all(doc, SELECTORS.breadcrumb).map((a) => text(a)).filter(Boolean);
     if (crumbs.length > 1) out.categoryPath = crumbs.join(' > ');
 
-    // --- shipping incentive ------------------------------------------------
-    out.freeShipping = readFreeShipping(doc, blob);
-
     // --- seller authority --------------------------------------------------
     Object.assign(out, readShop(doc, blob));
 
@@ -382,75 +372,23 @@
   }
 
   /**
-   * Tag harvesting.
-   *
-   * Etsy does not publish a listing's 13 tags verbatim anywhere in the page, so
-   * this collects the two link shapes that do mirror them — the `/market/<term>`
-   * links and the tag-style `/search?q=<term>` links rendered under "Explore
-   * related searches" — dedupes case-insensitively and caps at 13 (Etsy's own
-   * limit). Treat the result as a close proxy for the tag set, not the literal
-   * list; `tagCount` tells you how many we actually recovered.
+   * Tags are not published verbatim; Etsy renders `/market/<term>` links for the
+   * listing which mirror most of the tag set. Capped at 13 (Etsy's tag limit).
    */
   function readTags(doc) {
     const seen = new Set();
     const tags = [];
-    const push = (label) => {
-      const clean = String(label || '').replace(/\s+/g, ' ').trim();
-      const key = clean.toLowerCase();
-      if (!clean || clean.length > 60 || seen.has(key)) return;
-      seen.add(key);
-      tags.push(clean);
-    };
-
     for (const a of all(doc, SELECTORS.marketLinks)) {
-      if (tags.length >= 13) break;
       const href = a.getAttribute('href') || '';
       const m = href.match(/\/market\/([^/?#]+)/);
-      push(text(a) || (m ? decodeURIComponent(m[1]).replace(/[_+-]+/g, ' ') : ''));
-    }
-
-    // Tag chips also appear as search links; skip navigation/category links.
-    for (const a of all(doc, ['a[href*="/search?q="]'])) {
+      const label = text(a) || (m ? decodeURIComponent(m[1]).replace(/[_-]+/g, ' ') : '');
+      const key = label.toLowerCase().trim();
+      if (!key || key.length > 60 || seen.has(key)) continue;
+      seen.add(key);
+      tags.push(label.trim());
       if (tags.length >= 13) break;
-      const label = text(a);
-      if (!label || /^see more|^more like this/i.test(label)) continue;
-      push(label);
     }
-
     return tags;
-  }
-
-  const FREE_SHIPPING = /\bfree\s+(?:standard\s+|domestic\s+)?(?:shipping|delivery|postage)\b/i;
-  /** "Free shipping on orders over $35" is a shop promotion, not this listing. */
-  const CONDITIONAL_SHIPPING = /orders? over|when you spend|spend \$|on orders of/i;
-  const ZERO_SHIPPING_COST = /(?:cost to ship|shipping)\s*:?\s*(?:free|\$?0(?:[.,]00)?\b)/i;
-
-  /**
-   * Free shipping is stated in copy rather than structured data, so scan short
-   * text lines and ignore the conditional shop-wide promotions that would
-   * otherwise turn every listing into a false positive.
-   */
-  function readFreeShipping(doc, blob) {
-    const region = first(doc, SELECTORS.shippingRegion);
-    const lines = all(region || doc, SELECTORS.textLine);
-    let sawConditional = false;
-
-    for (const node of lines) {
-      const t = text(node);
-      if (!t || t.length > 160) continue;
-      if (!FREE_SHIPPING.test(t) && !ZERO_SHIPPING_COST.test(t)) continue;
-      if (CONDITIONAL_SHIPPING.test(t)) {
-        sawConditional = true;
-        continue;
-      }
-      return true;
-    }
-
-    // No usable line: fall back to the flattened text, but only when the page
-    // never mentioned a spend threshold (which would make this ambiguous).
-    if (!sawConditional && ZERO_SHIPPING_COST.test(blob)) return true;
-    if (!sawConditional && FREE_SHIPPING.test(blob) && !CONDITIONAL_SHIPPING.test(blob)) return true;
-    return false;
   }
 
   function readShop(doc, blob) {
@@ -470,32 +408,10 @@
     }
     const sales = blob.match(/([\d.,]+)\s*(?:sales|sold)\b/i);
     if (sales) out.shopTotalSales = toInt(sales[1]);
-    out.isStarSeller = /star seller/i.test(blob);
-    out.shopMemberSince = readMemberSince(doc, blob);
+    out.starSeller = /star seller/i.test(blob);
     const location = readLocation(doc, blob);
     if (location) out.shopLocation = location;
     return out;
-  }
-
-  /**
-   * Shop age. Etsy renders this as "On Etsy since 2019" / "Etsy seller since
-   * 2019", i.e. a year and nothing finer, so we return the year as an integer
-   * rather than inventing a month and day.
-   */
-  function readMemberSince(doc, blob) {
-    const patterns = [
-      /(?:on Etsy since|Etsy seller since|seller since|member since|On Etsy for)\s+((?:19|20)\d{2})/i,
-      /since\s+((?:19|20)\d{2})/i,
-    ];
-    for (const pattern of patterns) {
-      const m = String(blob).match(pattern);
-      if (m) {
-        const year = toInt(m[1]);
-        // Sanity: Etsy launched in 2005; anything earlier is a mis-parse.
-        if (year && year >= 2005 && year <= new Date().getFullYear()) return year;
-      }
-    }
-    return null;
   }
 
   const LOCATION_LABEL = /^(?:Ships? from|Located in|Shop location):?\s+(.{2,60})$/i;
@@ -695,14 +611,11 @@
       tags: pick(dom.tags),
       tagCount: pick(dom.tagCount),
 
-      freeShipping: Boolean(dom.freeShipping),
-
       shopName: pick(dom.shopName, ld.shopName),
       shopUrl: pick(dom.shopUrl),
       shopTotalSales: pick(dom.shopTotalSales),
-      isStarSeller: Boolean(dom.isStarSeller),
+      starSeller: Boolean(dom.starSeller),
       shopLocation: pick(dom.shopLocation),
-      shopMemberSince: pick(dom.shopMemberSince),
 
       rating: pick(ld.rating, dom.rating),
       reviewCount: pick(ld.reviewCount, dom.reviewCount),
@@ -734,9 +647,6 @@
     SELECTORS,
     parseListingPage,
     parseReviews,
-    readFreeShipping,
-    readMemberSince,
-    readTags,
     fromJsonLd,
     fromDom,
     finalizeDetail,
