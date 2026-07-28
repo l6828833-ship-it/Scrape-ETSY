@@ -999,6 +999,33 @@ await test('a reviewer+date match never grafts on a different body', () => {
   assert.equal(merged[0].photoCount, 2);
 });
 
+await test('tag-route accounting separates "never loaded" from "markup moved"', () => {
+  // These tallies drive the advice the run prints, and the two cases need
+  // opposite fixes: switch engine vs. update selectors.
+  const placeholder = { tagPages: 0, tagPagesWithLinks: 0, tagPagesWithModule: 0, tagPagesPlaceholder: 0 };
+  runnerTesting.noteTagSources(placeholder,
+    { tagSources: { marketLinks: 0, searchChips: 0, modulePresent: true, moduleEmpty: true } });
+  assert.deepEqual(placeholder,
+    { tagPages: 1, tagPagesWithLinks: 0, tagPagesWithModule: 1, tagPagesPlaceholder: 1 });
+
+  const gone = { tagPages: 0, tagPagesWithLinks: 0, tagPagesWithModule: 0, tagPagesPlaceholder: 0 };
+  runnerTesting.noteTagSources(gone,
+    { tagSources: { marketLinks: 0, searchChips: 0, modulePresent: false, moduleEmpty: false } });
+  assert.deepEqual(gone,
+    { tagPages: 1, tagPagesWithLinks: 0, tagPagesWithModule: 0, tagPagesPlaceholder: 0 });
+
+  const loaded = { tagPages: 0, tagPagesWithLinks: 0, tagPagesWithModule: 0, tagPagesPlaceholder: 0 };
+  runnerTesting.noteTagSources(loaded,
+    { tagSources: { marketLinks: 13, searchChips: 2, modulePresent: true, moduleEmpty: false } });
+  assert.equal(loaded.tagPagesWithLinks, 1);
+
+  // A worker-only parse has no document, so it reports nothing rather than
+  // claiming the page had no tags.
+  const unknown = { tagPages: 0, tagPagesWithLinks: 0, tagPagesWithModule: 0, tagPagesPlaceholder: 0 };
+  runnerTesting.noteTagSources(unknown, { tagSources: null });
+  assert.equal(unknown.tagPages, 0);
+});
+
 await test('a review count is always a whole number', () => {
   // The star widget's label carries "4.94" as the rating right next to the count,
   // and dot-grouping locales write "1.204" for 1,204 — neither may be exported as

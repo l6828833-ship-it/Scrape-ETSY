@@ -23,6 +23,48 @@
     await sleep(pauseMs);
   }
 
+  /**
+   * Etsy's tag section is an empty placeholder in the served HTML and loads on
+   * demand, so a page we merely scrolled past can still have no tag links in it.
+   * Scroll the module itself into view — that is what triggers the load — and
+   * poll until links appear.
+   *
+   * Returns the number of `/market/` links present when we stopped waiting, so
+   * the run can distinguish "the module never loaded" from "Etsy renamed the
+   * markup" instead of reporting a bare null.
+   */
+  async function waitForTagLinks(timeoutMs) {
+    const countLinks = () => document.querySelectorAll('a[href*="/market/"]').length;
+    if (countLinks() > 0) return countLinks();
+
+    const selectors = (globalThis.EtsyDetail && globalThis.EtsyDetail.SELECTORS
+      && globalThis.EtsyDetail.SELECTORS.tagsModule) || [];
+    const findModule = () => {
+      for (const sel of selectors) {
+        try {
+          const el = document.querySelector(sel);
+          if (el) return el;
+        } catch (_) { /* unsupported selector */ }
+      }
+      return null;
+    };
+
+    const deadline = Date.now() + timeoutMs;
+    const restoreY = window.scrollY;
+    while (Date.now() < deadline) {
+      const module = findModule();
+      if (module && typeof module.scrollIntoView === 'function') {
+        try {
+          module.scrollIntoView({ block: 'center' });
+        } catch (_) { /* detached */ }
+      }
+      await sleep(300);
+      if (countLinks() > 0) break;
+    }
+    window.scrollTo(0, restoreY);
+    return countLinks();
+  }
+
   /** Reviews are lazily rendered; wait for the region or give up quietly. */
   async function waitForReviews(timeoutMs) {
     const deadline = Date.now() + timeoutMs;
@@ -85,6 +127,7 @@
           await waitForReviews(opts.waitForReviewsMs == null ? 5000 : opts.waitForReviewsMs);
           if (expandReviewText(context.maxReviews || 20) > 0) await sleep(400);
         }
+        await waitForTagLinks(opts.tagWaitMs == null ? 5000 : opts.tagWaitMs);
       }
       const html = document.documentElement ? document.documentElement.outerHTML : '';
       const result = globalThis.EtsyDetail.parseListingPage({ html, doc: document, context });
@@ -96,6 +139,10 @@
         const ehunt = await readEhunt(opts.ehuntTimeoutMs == null ? 6000 : opts.ehuntTimeoutMs);
         result.record = globalThis.EtsyEhunt.mergeEhuntRecord(result.record, ehunt);
         result.ehuntFound = Boolean(ehunt);
+        // "Panel never appeared" and "panel appeared but its tag list was still
+        // empty" need opposite fixes, so they are reported separately.
+        result.ehuntOnPage = globalThis.EtsyEhunt.isInstalledOnPage(document);
+        result.ehuntTagCount = (ehunt && ehunt.tags && ehunt.tags.length) || 0;
       }
 
       result.locationHref = location.href;

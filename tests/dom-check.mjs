@@ -562,6 +562,15 @@ try {
       assert.equal(L.tagSource, null);
     });
 
+    await test('an empty tags module is reported as unloaded, not as missing markup', () => {
+      // The distinction the run needs in order to give useful advice: the section
+      // is right there, it just has nothing in it yet.
+      const t = live.counts.tagSources;
+      assert.equal(t.modulePresent, true, 'the placeholder was found');
+      assert.equal(t.moduleEmpty, true, 'and it holds no links');
+      assert.equal(t.marketLinks, 0);
+    });
+
     await test('the rest of the real-shape page still parses', () => {
       assert.equal(L.price, 2.59);
       assert.equal(L.rating, 4.94);
@@ -788,6 +797,57 @@ try {
       assert.equal(out.present, true);
       assert.ok(out.panel, 'panel parsed');
       assert.equal(out.panel.ehuntPanel, true);
+    });
+
+    await test('finds the panel when it is mounted in a shadow root', async () => {
+      // Injected UIs are routinely mounted in a shadow root so their CSS cannot
+      // clash with the host page. document.querySelector does not descend into
+      // one, so a panel plainly visible on screen used to read as "not
+      // installed" — silently costing every tag on the run.
+      const shadow = JSON.parse(await session.evaluate(`(() => {
+        // A separate document, so the real light-DOM panel on this fixture page
+        // cannot satisfy the lookup and mask the shadow traversal.
+        const doc = document.implementation.createHTMLDocument('shadow');
+        const host = doc.createElement('div');
+        doc.body.appendChild(host);
+        const root = host.attachShadow({ mode: 'open' });
+        root.innerHTML = '<div class="eh-exe-tags-list">'
+          + '<div class="eh-exe-tags-list-item"><div>'
+          + '<div class="el-tooltip__trigger">Shadow Planner</div>'
+          + '<div class="eh-exe-tags-list-item-value"> (2.5M) </div></div></div></div>';
+        const panel = EtsyEhunt.parsePanel(doc);
+        return JSON.stringify({
+          present: EtsyEhunt.isPresent(doc),
+          installed: EtsyEhunt.isInstalledOnPage(doc),
+          lightDomHasNoPanel: doc.querySelector('.eh-exe-tags-list') === null,
+          tags: panel && panel.tags,
+          volume: panel && panel.tagVolumes && panel.tagVolumes['Shadow Planner']
+        });
+      })()`));
+      assert.equal(shadow.lightDomHasNoPanel, true,
+        'the panel is reachable only by descending into the shadow root');
+      assert.equal(shadow.present, true, 'the shadow-mounted panel was found');
+      assert.equal(shadow.installed, true);
+      assert.deepEqual(shadow.tags, ['Shadow Planner']);
+      assert.equal(shadow.volume, 2500000);
+    });
+
+    await test('EHunt on the page is distinguished from EHunt rendering tags', async () => {
+      // Two failure modes, two different fixes: wait longer, or install it.
+      const states = JSON.parse(await session.evaluate(`(() => {
+        const parse = (html) => new DOMParser().parseFromString(
+          '<html><body>' + html + '</body></html>', 'text/html');
+        return JSON.stringify({
+          loadingPresent: EtsyEhunt.isInstalledOnPage(
+            parse('<img src="chrome-extension://pmpgnefoilpinnblccjddomajohmbpko/icons/copy.svg">')),
+          loadingPanel: EtsyEhunt.isPresent(
+            parse('<img src="chrome-extension://pmpgnefoilpinnblccjddomajohmbpko/icons/copy.svg">')),
+          absent: EtsyEhunt.isInstalledOnPage(parse('<p>just an Etsy page</p>'))
+        });
+      })()`));
+      assert.equal(states.loadingPresent, true, 'EHunt is clearly running here');
+      assert.equal(states.loadingPanel, false, 'but its tag panel has not rendered');
+      assert.equal(states.absent, false);
     });
 
     await test('reads all 13 real tags with their search volumes', () => {

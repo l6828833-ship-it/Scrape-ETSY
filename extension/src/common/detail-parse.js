@@ -80,6 +80,17 @@
     shopName: ['[data-shop-name]', 'span.wt-text-title-small a[href*="/shop/"]'],
     breadcrumb: ['nav[aria-label="Breadcrumbs"] a', '.breadcrumb a', 'ol[data-breadcrumbs] a'],
     marketLinks: ['a[href*="/market/"]'],
+    searchChips: ['a[href*="/search?q="]'],
+    // Etsy ships the tag section as an empty placeholder and fills it in after
+    // load. Finding this element with no links inside it is the difference
+    // between "Etsy renamed the markup" and "the module never loaded" — two
+    // problems with completely different fixes.
+    tagsModule: [
+      '[data-appears-component-name="listing_page_tags"]',
+      '[data-appears-component-name*="tag" i]',
+      '[data-click-queries*="tag" i]',
+      '[data-tags-module]',
+    ],
     images: ['ul[data-carousel-pane-list] img', 'img[data-index]', 'img[src*="etsystatic"]'],
     detailBullets: ['[data-product-details-container] li', '#wt-content-toggle-product-details-read-more li', '.wt-product-details li'],
     reviewRegion: [
@@ -589,6 +600,35 @@
    * limit). Treat the result as a close proxy for the tag set, not the literal
    * list; `tagCount` tells you how many we actually recovered.
    */
+  /**
+   * Why did tag harvesting find nothing?
+   *
+   * "tags: null" has three completely different causes and one useless message,
+   * so the run reports which one it hit instead of leaving the user to guess:
+   *
+   *   * `modulePresent && moduleEmpty` — Etsy's tag section is on the page but
+   *     still an unfilled placeholder. Nothing is wrong with our selectors; the
+   *     page simply never loaded that module, which is what happens in fetch
+   *     mode and can happen in a tab that was never scrolled to it.
+   *   * `!modulePresent` with no links anywhere — Etsy changed the markup, or
+   *     this listing genuinely has no tag section.
+   *   * links present but no tags kept — the labels were filtered out.
+   */
+  function describeTagSources(doc) {
+    if (!doc) return null;
+    const module = first(doc, SELECTORS.tagsModule);
+    const marketLinks = all(doc, SELECTORS.marketLinks).length;
+    const chips = all(doc, SELECTORS.searchChips).length;
+    return {
+      marketLinks,
+      searchChips: chips,
+      modulePresent: Boolean(module),
+      // A placeholder Etsy has not filled in yet: present, but with no links of
+      // its own and effectively no content.
+      moduleEmpty: Boolean(module) && !module.querySelector('a[href]'),
+    };
+  }
+
   function readTags(doc) {
     const seen = new Set();
     const tags = [];
@@ -608,7 +648,7 @@
     }
 
     // Tag chips also appear as search links; skip navigation/category links.
-    for (const a of all(doc, ['a[href*="/search?q="]'])) {
+    for (const a of all(doc, SELECTORS.searchChips)) {
       if (tags.length >= 13) break;
       const label = text(a);
       if (!label || /^see more|^more like this/i.test(label)) continue;
@@ -921,6 +961,7 @@
         dom: Object.keys(dom).filter((k) => dom[k] !== null && dom[k] !== undefined).length,
         reviews: reviews.length,
         reviewsFromJsonLd: ldReviews.length,
+        tagSources: describeTagSources(doc),
       },
     };
   }
@@ -1027,6 +1068,7 @@
     readMemberSince,
     readShopAgeMonths,
     readTags,
+    describeTagSources,
     fromJsonLd,
     reviewsFromJsonLd,
     mergeReviews,

@@ -30,6 +30,22 @@
 
   const SELECTORS = {
     panel: ['.eh-exe-tags-list', '[class*="eh-exe-"]'],
+    /**
+     * Evidence that EHunt is on the page even before its tag list renders.
+     *
+     * The extension id is EHunt's own, observed in the `chrome-extension://…`
+     * icon URLs inside its panel markup. Hardcoding it is admittedly brittle, so
+     * it is only ever a *hint* used to tell "EHunt is here but still loading"
+     * apart from "EHunt is not installed" — two problems with different fixes.
+     * Nothing is parsed from it.
+     */
+    presence: [
+      '.eh-exe-tags-list',
+      '[class*="eh-exe-"]',
+      '[src*="pmpgnefoilpinnblccjddomajohmbpko"]',
+      '[id^="ehunt" i]',
+      '[class*="ehunt" i]',
+    ],
     tagItem: ['.eh-exe-tags-list-item'],
     tagLabel: ['.el-tooltip__trigger', 'div:not([class])'],
     tagVolume: ['.eh-exe-tags-list-item-value'],
@@ -111,12 +127,69 @@
     return Number.isNaN(parsed) ? null : new Date(parsed).toISOString().slice(0, 10);
   }
 
+  /**
+   * Every DOM root worth searching: the document plus any open shadow roots.
+   *
+   * Injected UIs are routinely mounted in a shadow root so their CSS cannot
+   * collide with the host page's, and `document.querySelector` does not descend
+   * into one. Without this, a panel that is plainly visible on screen reads as
+   * "not installed". Closed shadow roots and cross-origin iframes stay
+   * unreachable — nothing an extension does from the page can change that.
+   */
+  function domRoots(doc) {
+    const roots = [doc];
+    if (!doc || typeof doc.querySelectorAll !== 'function') return roots;
+    const walk = (root, depth) => {
+      if (depth > 5) return;
+      let nodes;
+      try {
+        nodes = root.querySelectorAll('*');
+      } catch (_) {
+        return;
+      }
+      for (const el of nodes) {
+        if (el && el.shadowRoot) {
+          roots.push(el.shadowRoot);
+          walk(el.shadowRoot, depth + 1);
+        }
+      }
+    };
+    try {
+      walk(doc, 0);
+    } catch (_) { /* hostile DOM; the document alone will do */ }
+    return roots;
+  }
+
+  /** The root that actually holds EHunt's panel, or null. */
+  function findPanelRoot(doc) {
+    if (!doc || typeof doc.querySelector !== 'function') return null;
+    // Fast path: the overwhelmingly common case, no shadow walk needed.
+    if (first(doc, SELECTORS.panel)) return doc;
+    for (const root of domRoots(doc)) {
+      if (root !== doc && first(root, SELECTORS.panel)) return root;
+    }
+    return null;
+  }
+
   /** True when the EHunt panel has rendered on this page. */
   function isPresent(doc) {
     if (!doc || typeof doc.querySelector !== 'function') return false;
-    if (first(doc, SELECTORS.panel)) return true;
+    return Boolean(findPanelRoot(doc));
+  }
+
+  /**
+   * True when EHunt is on the page but has not necessarily drawn its tag list.
+   *
+   * Distinguishing this from isPresent() is the whole point: "EHunt is loading"
+   * means wait longer, "EHunt is absent" means install or enable it.
+   */
+  function isInstalledOnPage(doc) {
+    if (!doc || typeof doc.querySelector !== 'function') return false;
+    for (const root of domRoots(doc)) {
+      if (first(root, SELECTORS.presence)) return true;
+    }
     try {
-      return /EHunt/i.test(text(doc.body).slice(0, 40000));
+      return /\bEHunt\b/i.test(text(doc.body).slice(0, 40000));
     } catch (_) {
       return false;
     }
@@ -190,9 +263,12 @@
    * @returns {?object} partial record, or null when the panel is absent
    */
   function parsePanel(doc) {
-    if (!isPresent(doc)) return null;
-    const { tags, tagVolumes } = readTags(doc);
-    const stats = readStats(doc);
+    // Parse from whichever root holds the panel, so a shadow-mounted panel reads
+    // exactly like one in the light DOM.
+    const root = findPanelRoot(doc);
+    if (!root) return null;
+    const { tags, tagVolumes } = readTags(root);
+    const stats = readStats(root);
 
     const record = {};
     if (tags.length) {
@@ -288,6 +364,9 @@
     SELECTORS,
     LABELS,
     isPresent,
+    isInstalledOnPage,
+    findPanelRoot,
+    domRoots,
     parsePanel,
     readTags,
     readStats,

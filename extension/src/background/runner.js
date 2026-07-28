@@ -209,6 +209,14 @@ export async function startRun(rawSettings) {
     tabMode: settings.tabMode,
     /** EHunt panel bookkeeping. */
     ehuntHits: 0,
+    ehuntOnPage: 0,
+    ehuntTagHits: 0,
+    // Tag-route accounting, so an empty `tags` column can be explained rather
+    // than merely counted.
+    tagPages: 0,
+    tagPagesWithLinks: 0,
+    tagPagesWithModule: 0,
+    tagPagesPlaceholder: 0,
     /** Search-row coverage, so a rotted card selector is announced. */
     rowGaps: {},
     rowsSeen: 0,
@@ -222,6 +230,15 @@ export async function startRun(rawSettings) {
   const workerCount = Math.min(settings.maxConcurrency, Math.max(1, settings.queries.length * settings.maxPagesPerQuery));
   const promise = (async () => {
     try {
+      // Said up front rather than left to be discovered in the export: the
+      // search grid does not carry these fields at all, so with the deep scrape
+      // off there is no path by which they could ever be populated.
+      if (!settings.scrapeDetails) {
+        await store.log('info',
+          'Deep scrape is OFF, so tags, description, favourites, stock and shop sales will '
+          + 'not be collected — Etsy publishes none of them on the search grid. Open '
+          + '"Deep scrape" and tick "Scrape listing details" to get them.');
+      }
       await Promise.all(Array.from({ length: workerCount }, (_, i) => worker(ctx, i)));
       if (settings.scrapeDetails && !signal.aborted) await detailPhase(ctx);
     } finally {
@@ -582,11 +599,20 @@ async function detailPhase(ctx) {
     if (ctx.ehuntHits) {
       await store.log('success',
         `EHunt panel read on ${ctx.ehuntHits}/${ctx.detailsCaptured} listing(s) — tags from EHunt.`);
+    } else if (ctx.ehuntOnPage) {
+      // EHunt is clearly running — its own markup is in the page — but the tag
+      // list never filled in. Waiting longer is the fix, not reinstalling.
+      await store.log('warn',
+        `EHunt was on the page for ${ctx.ehuntOnPage}/${ctx.detailsCaptured} listing(s) but its `
+        + `tag list never finished rendering within ${Math.round(settings.ehuntWaitMs / 1000)}s. `
+        + 'Raise "EHunt wait" — it fetches its own data per listing and is slower than Etsy. '
+        + 'Also make sure its panel is expanded, since it renders tags only when open.');
     } else {
       await store.log('warn',
-        'EHunt panel never appeared on any listing. Check that the EHunt extension is '
-        + 'installed and enabled, that it is allowed to run in all windows, and try '
-        + 'raising the EHunt wait time. Tags fall back to the page-link proxy.');
+        'EHunt was not detected on any listing page. Check that the EHunt - Etsy Rank Tool '
+        + 'extension is installed and enabled, that it is not restricted to specific sites, '
+        + 'and that it works when you open a listing manually. Note it cannot be read if it '
+        + 'renders inside its own iframe. Tags fall back to the page-link proxy.');
     }
   }
   if (settings.etsyApiKey && !ctx.apiDisabled) {
@@ -595,6 +621,80 @@ async function detailPhase(ctx) {
       + `${ctx.apiMisses ? `, ${ctx.apiMisses} lookup(s) failed` : ''}`);
   }
   await reportDetailCoverage(ctx.detailGaps, ctx.detailsCaptured, ctx.detailEscalated ? ENGINES.TAB : settings.engine);
+  await reportTagCoverage(ctx);
+}
+
+/** Tally what each listing page offered the tag harvester. */
+function noteTagSources(ctx, counts) {
+  const info = counts && counts.tagSources;
+  if (!info) return;
+  ctx.tagPages += 1;
+  if (info.marketLinks > 0 || info.searchChips > 0) ctx.tagPagesWithLinks += 1;
+  if (info.moduleEmpty) ctx.tagPagesPlaceholder += 1;
+  if (info.modulePresent) ctx.tagPagesWithModule += 1;
+}
+
+/**
+ * Say which of the three tag routes was actually available, and what to do.
+ *
+ * "tags (25/25)" in the gap report is true but useless: it does not say whether
+ * Etsy changed its markup, whether the module simply never loaded, or whether
+ * the user was never on a route that can return tags in the first place. Each
+ * cause has a different fix, so each is reported separately.
+ */
+async function reportTagCoverage(ctx) {
+  const { settings } = ctx;
+  const captured = ctx.detailsCaptured;
+  if (!captured) return;
+
+  const withTags = captured - (ctx.detailGaps.tags || 0);
+  if (withTags === captured) return; // every listing has tags; nothing to explain
+
+  await store.log('warn',
+    `Tags missing on ${captured - withTags}/${captured} listing(s). Routes available this run:`);
+
+  if (!settings.etsyApiKey) {
+    await store.log('warn',
+      '• Etsy API — no key set. This is the only route that returns a listing\'s real '
+      + '13 tags. A free keystring from etsy.com/developers/your-apps pasted into '
+      + '"Etsy API key" is enough; no OAuth and no app review.');
+  } else if (ctx.apiDisabled) {
+    await store.log('warn', '• Etsy API — key rejected by Etsy, so it was disabled for this run.');
+  } else {
+    await store.log('info', `• Etsy API — answered for ${ctx.apiHits}/${captured} listing(s).`);
+  }
+
+  if (!settings.useEhuntPanel) {
+    await store.log('warn',
+      '• EHunt panel — not enabled. Tick "Read tags from the EHunt panel" if you have '
+      + 'the EHunt - Etsy Rank Tool extension installed.');
+  } else if (!ctx.ehuntOnPage) {
+    await store.log('warn',
+      '• EHunt panel — not detected on any page, so it is not installed, not enabled, or '
+      + 'not permitted to run there.');
+  } else if (!ctx.ehuntTagHits) {
+    await store.log('warn',
+      `• EHunt panel — present on ${ctx.ehuntOnPage}/${captured} page(s) but its tag list `
+      + 'stayed empty. Raise "EHunt wait" and leave its panel expanded.');
+  }
+
+  // The page-link route, and the distinction that matters most.
+  if (ctx.tagPages && ctx.tagPagesPlaceholder === ctx.tagPages) {
+    await store.log('warn',
+      `• Page links — Etsy's tag section was still an unloaded placeholder on all `
+      + `${ctx.tagPages} page(s), so there were no links to harvest. This is normal with `
+      + 'the fetch engine: the module only loads once the page runs its JavaScript and '
+      + 'is scrolled to. Switch Engine to "tab".');
+  } else if (ctx.tagPages && !ctx.tagPagesWithLinks && !ctx.tagPagesWithModule) {
+    await store.log('warn',
+      '• Page links — no tag section and no /market/ links anywhere on the page, which '
+      + 'means Etsy moved this markup: update SELECTORS.tagsModule / marketLinks in '
+      + 'src/common/detail-parse.js.');
+  } else if (ctx.tagPages && !ctx.tagPagesWithLinks) {
+    await store.log('warn',
+      `• Page links — the tag section rendered on ${ctx.tagPagesWithModule}/${ctx.tagPages} `
+      + 'page(s) but contained no links, so nothing could be harvested from it.');
+  }
 }
 
 async function processDetailTask(ctx, target, label) {
@@ -662,6 +762,9 @@ async function processDetailTask(ctx, target, label) {
 
     if (outcome.aborted || ctx.signal.aborted) return;
     if (outcome.ehuntFound) ctx.ehuntHits += 1;
+    if (outcome.ehuntOnPage) ctx.ehuntOnPage += 1;
+    if (outcome.ehuntTagCount) ctx.ehuntTagHits += 1;
+    noteTagSources(ctx, outcome.counts);
 
     if (outcome.blocked) {
       await store.bumpProgress({ blocks: 1 });
@@ -945,4 +1048,5 @@ export async function scrapeActiveTab() {
 export const __testing = {
   Scheduler, Dedupe, applyRowFilters, missingDetailFields, describeDetail,
   tallyRowGaps, WATCHED_ROW_FIELDS, resolveAmbiguousReviewCounts, LIMITS,
+  noteTagSources,
 };
