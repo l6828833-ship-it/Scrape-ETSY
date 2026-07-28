@@ -571,6 +571,28 @@ group('Etsy Open API enrichment');
 
 const api = await import(path.join(ext, 'src/common/etsy-api.js'));
 
+await test('the API merge never relabels where the tags came from', () => {
+  // The bug: both fallback branches re-derived tagSource as "page-links", so
+  // tags read from the EHunt panel were exported labelled as page links. The one
+  // field whose job is to say how far to trust the tags was misreporting them.
+  const fromEhunt = { tags: ['a', 'b'], tagCount: 2, tagSource: 'ehunt', tagVolumes: { a: 10 } };
+
+  const noApi = api.mergeApiRecord(fromEhunt, null);
+  assert.equal(noApi.tagSource, 'ehunt', 'EHunt provenance survives an absent API');
+  assert.equal(noApi.apiEnriched, false);
+
+  const apiWithoutTags = api.mergeApiRecord(fromEhunt, { title: 'x', tags: [] });
+  assert.equal(apiWithoutTags.tagSource, 'ehunt', 'an API reply with no tags changes nothing');
+
+  const apiWithTags = api.mergeApiRecord(fromEhunt, { tags: ['real', 'tags'] });
+  assert.equal(apiWithTags.tagSource, 'api', 'but real API tags do outrank EHunt');
+
+  // Page-link tags with no recorded source still get labelled correctly.
+  assert.equal(api.mergeApiRecord({ tags: ['x'] }, null).tagSource, 'page-links');
+  assert.equal(api.mergeApiRecord({}, null).tagSource, null, 'no tags means no source');
+});
+
+
 /** Shape documented for getListing (?includes=Shop). */
 const apiPayload = {
   listing_id: 1544102938,
@@ -875,6 +897,22 @@ await test('every requested intelligence field is in the schema', () => {
 await test('reads the breadcrumb category path', () => {
   const ld = D.fromJsonLd(listingHtml);
   assert.equal(ld.categoryPath, 'Home & Living > Office > Calendars & Planners');
+});
+
+await test('a "was" price below the current price is not a discount', () => {
+  // Seen on a real listing: price 3.97 with originalPrice 1.19, taken from a
+  // strike-through elsewhere on the page. A former price is higher by
+  // definition, so a lower one describes nothing.
+  const low = D.finalizeDetail({}, { price: 3.97, originalPrice: 1.19 }, {}, []);
+  assert.equal(low.originalPrice, null);
+  assert.equal(low.onSale, false);
+
+  const real = D.finalizeDetail({}, { price: 7.25, originalPrice: 12.09 }, {}, []);
+  assert.equal(real.originalPrice, 12.09);
+  assert.equal(real.onSale, true);
+
+  const equal = D.finalizeDetail({}, { price: 5, originalPrice: 5 }, {}, []);
+  assert.equal(equal.originalPrice, null, 'the same price is not a sale');
 });
 
 await test('the panel exclusion list keeps up with the panel selectors', () => {

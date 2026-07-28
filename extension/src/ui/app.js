@@ -466,7 +466,31 @@ async function onExport(format) {
 
 async function onCopyJson() {
   try {
-    const dataset = currentDataset === DATASETS.all ? DATASETS.search : currentDataset;
+    const includeDebug = el('includeDebug').checked;
+
+    // "All datasets" used to silently fall back to the search rows here, so
+    // Copy JSON handed over one of the three tables while the picker said all
+    // three — the same shape of failure as exporting the grid and wondering
+    // where the tags went. JSON can hold all three, so it now does.
+    if (currentDataset === DATASETS.all) {
+      const data = await collectAll();
+      const payload = {
+        search: pickFields(data.search, { fields: DATASET_FIELDS[DATASETS.search], includeDebug }).rows,
+        details: pickFields(data.details, { fields: DATASET_FIELDS[DATASETS.details], includeDebug }).rows,
+        reviews: pickFields(data.reviews, { fields: DATASET_FIELDS[DATASETS.reviews], includeDebug }).rows,
+      };
+      const totals = Object.values(payload).reduce((n, arr) => n + arr.length, 0);
+      if (!totals) {
+        toast('Nothing to copy yet', true);
+        return;
+      }
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      toast(`Copied all datasets — ${payload.search.length} search, `
+        + `${payload.details.length} details, ${payload.reviews.length} reviews`);
+      return;
+    }
+
+    const dataset = currentDataset;
     const { rows } = await fetchDataset(dataset);
     if (!rows.length) {
       toast('Nothing to copy yet', true);
@@ -474,7 +498,7 @@ async function onCopyJson() {
     }
     const { rows: shaped } = pickFields(rows, {
       fields: DATASET_FIELDS[dataset],
-      includeDebug: el('includeDebug').checked,
+      includeDebug,
     });
     await navigator.clipboard.writeText(JSON.stringify(shaped, null, 2));
     toast(`Copied ${rows.length} row(s) as JSON`);

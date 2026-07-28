@@ -950,6 +950,46 @@ try {
       assert.notEqual(out.merged.viewsCount, 0, 'a gap must never be filled with 0');
     });
 
+    await test('EHunt\'s own tag links are not harvested as Etsy page links', async () => {
+      // EHunt renders its tags as /market/<term> links, which is exactly the
+      // shape Etsy's own tag harvester looks for. So EHunt's tags were scooped up
+      // by the page-link route and then exported as `tagSource: 'page-links'` —
+      // third-party data presented as Etsy's own.
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const doc = new DOMParser().parseFromString(
+          '<html><body>'
+          + '<div id="etsy-rank-tool-product-table">'
+          + '<a href="/market/ehunt_only_tag">EHunt Only Tag</a></div>'
+          + '<a href="/market/genuine_etsy_tag">Genuine Etsy Tag</a>'
+          + '</body></html>', 'text/html');
+        return JSON.stringify(EtsyDetail.readTags(doc));
+      })()`));
+      assert.deepEqual(out, ['Genuine Etsy Tag'],
+        'only the link outside the third-party panel counts as a page link');
+    });
+
+    await test('Etsy\'s report dialog is not exported as a product variation', async () => {
+      // A real run reported every digital listing as having a variation named
+      // "Choose a reason…" with options "There's a problem with my order" and
+      // "It uses my intellectual property without permission", plus a
+      // variationCount of 4 derived from them. That is Etsy's "Report this item"
+      // dropdown, matched by the generic `.wt-select select` selector.
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const doc = new DOMParser().parseFromString(
+          '<html><body>'
+          + '<div class="wt-select"><select><option>Choose a reason…</option>'
+          + '<option>There’s a problem with my order</option>'
+          + '<option>It uses my intellectual property without permission</option>'
+          + '<option>I don’t think it meets Etsy’s policies</option></select></div>'
+          + '<div class="wt-select"><select data-variation-id="77">'
+          + '<option>A4</option><option>US Letter</option></select></div>'
+          + '</body></html>', 'text/html');
+        return JSON.stringify(EtsyDetail.readVariations(doc));
+      })()`));
+      assert.equal(out.length, 1, `only the real variation should survive, got ${JSON.stringify(out)}`);
+      assert.deepEqual(out[0].options, ['A4', 'US Letter']);
+    });
+
     await test('EHunt\'s panel text is not read as Etsy page copy', async () => {
       // EHunt injects into the same body, and its table labels read exactly like
       // Etsy copy. Its "Ships From | United States | Other Data" cells turned
