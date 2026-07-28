@@ -543,9 +543,12 @@ try {
       assert.equal(byId['9003'].shopName, 'GroundedGrowStudio');
     });
 
-    await test('a shop-level count is not used as the listing review count', () => {
+    await test('a lone "(N)" is taken as the listing count', () => {
+      // One card cannot tell a listing count from a shop total; the run-level
+      // rule in runner.resolveAmbiguousReviewCounts() settles it using repeats
+      // across a shop's listings (covered in tests/verify.mjs).
       assert.equal(byId['9003'].rating, null);
-      assert.equal(byId['9003'].reviewCount, null, '(144) with no stars is the shop total');
+      assert.equal(byId['9003'].reviewCount, 144);
     });
 
     await test('badges require a badge element, not incidental copy', () => {
@@ -562,6 +565,48 @@ try {
       assert.equal(good.freeShipping, true);
       assert.equal(good.shopName, 'LoveLaurenJoy');
       assert.equal(good.price, 4.24);
+    });
+
+    await test('reads a rating from a stars container with no aria label', () => {
+      // Regression: a live run returned rating null on every row because Etsy's
+      // cards do not always use a rating input or "out of 5" text.
+      const r = byId['9006'];
+      assert.equal(r.rating, 4.8, 'rating recovered from the stars container');
+      assert.equal(r.price, 2.59);
+      assert.notEqual(r.rating, r.price, 'and it is not the price');
+      assert.equal(r.reviewCount, 325, 'a single "(N)" is the listing count');
+      assert.equal(r.shopName, 'MyPlanPrintable');
+      assert.equal(r.isDigital, true);
+    });
+
+    await test('the digital label is found inside a longer line too', () => {
+      // Regression: badge-only matching kept 12 of ~61 rows on a live page.
+      const r = byId['9007'];
+      assert.equal(r.isDigital, true, '"Instant Download · Ready in minutes"');
+      assert.equal(r.shopName, 'PrintableCo');
+      assert.equal(r.rating, null, 'no stars on this card, so still null');
+    });
+
+    await test('a price-styled number is still never a rating', () => {
+      // The original bug must stay fixed while recall is restored.
+      assert.equal(byId['9001'].rating, null);
+      assert.equal(byId['9001'].price, 2.59);
+      for (const row of rows) {
+        if (row.rating !== null && row.price !== null) {
+          assert.notEqual(row.rating, row.price, `rating echoes price on ${row.listingId}`);
+        }
+      }
+    });
+
+    await test('two parenthesised numbers stay ambiguous, not guessed', async () => {
+      const out = await session.evaluate(`(() => {
+        const doc = new DOMParser().parseFromString(
+          '<html><body><div data-listing-id="1">'
+          + '<a class="listing-link" href="/listing/1/x"></a>'
+          + '<p>(144)</p><p>(8,214)</p></div></body></html>', 'text/html');
+        return EtsyParse.readReviewCount(doc.querySelector('[data-listing-id]'), false);
+      })()`);
+      assert.equal(out, null, 'two candidates and no stars: decline rather than pick');
     });
 
     await test('ratings outside 0-5 are rejected outright', async () => {
