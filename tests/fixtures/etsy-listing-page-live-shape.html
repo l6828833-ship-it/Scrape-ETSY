@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<!--
+  Second listing-page fixture, modelled on the structures observed in a real
+  Etsy listing page (listing 4451164796). It deliberately differs from
+  etsy-listing-page.html everywhere the real page differed from our assumptions:
+
+    * NO BreadcrumbList and no <nav aria-label="Breadcrumbs">. The taxonomy is
+      published only as the Product node's `category` string, using "<" as the
+      separator, broadest segment first.
+    * The shop states its tenure as "11 months on Etsy" — there is no
+      "On Etsy since <year>" string anywhere, which is why shopMemberSince came
+      back null on the real page. shopAgeMonths carries the fact instead.
+    * The JSON-LD Product carries a full `review[]` array. That is served in the
+      initial HTML, so reviews are recoverable without a live DOM — previously
+      fetch-mode runs always returned zero reviews.
+    * The tags module is a lazy-loaded placeholder: it holds only its query
+      metadata, with no /market/ links, so tags cannot be harvested from the
+      served HTML at all. Tag harvesting needs the tab engine.
+    * The description lives in p[data-product-details-description-text-content].
+
+  One review (quietmornings) appears in BOTH the JSON-LD array and the DOM, with
+  identical text, so the merge has to dedupe it and keep the richer DOM copy
+  (which has a photo and a variation line).
+
+  Hand-written from the documented public structure; no Etsy markup copied.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>2026 August Calendar Printable for Kids - Etsy</title>
+    <meta property="og:description" content="Printable August 2026 activities calendar for kids." />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": "2026 August Activities Calendar for Kids, Printable Digital Download",
+        "description": "Printable August 2026 activities calendar for kids.",
+        "url": "https://www.etsy.com/listing/4451164796/2026-august-activities-calendar",
+        "sku": "4451164796",
+        "category": "Paper & Party Supplies < Paper < Calendars & Planners",
+        "image": "https://i.etsystatic.com/37111746/r/il/4e7384/8086196461/il_fullxfull.8086196461_ipdq.jpg",
+        "offers": {
+          "@type": "Offer",
+          "price": "2.59",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        },
+        "aggregateRating": {
+          "@type": "AggregateRating",
+          "ratingValue": "4.94",
+          "reviewCount": "132"
+        },
+        "review": [
+          {
+            "@type": "Review",
+            "author": { "@type": "Person", "name": "quietmornings" },
+            "datePublished": "2026-07-10",
+            "reviewRating": { "@type": "Rating", "ratingValue": "5" },
+            "reviewBody": "My kids filled in the whole month the day it printed. Colours came out great on plain paper."
+          },
+          {
+            "@type": "Review",
+            "author": { "@type": "Person", "name": "deskplantdad" },
+            "datePublished": "2026-06-28",
+            "reviewRating": { "@type": "Rating", "ratingValue": "5" },
+            "reviewBody": "Downloaded instantly and the seller answered a question about margins within an hour."
+          },
+          {
+            "@type": "Review",
+            "author": { "@type": "Person", "name": "annaK" },
+            "datePublished": "2026-06-02",
+            "reviewRating": { "@type": "Rating", "ratingValue": "4" },
+            "reviewBody": "Lovely design but the US Letter file had wider margins than I expected, so I had to trim it."
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <div class="listing-images">
+        <ul data-carousel-pane-list>
+          <li><img data-index="0" src="https://i.etsystatic.com/37111746/r/il/4e7384/8086196461/il_794xN.8086196461_ipdq.jpg" alt="" /></li>
+          <li><img data-index="1" src="https://i.etsystatic.com/37111746/r/il/4e7385/8086196462/il_794xN.8086196462_jkln.jpg" alt="" /></li>
+        </ul>
+      </div>
+
+      <div class="buy-box">
+        <h1 data-buy-box-listing-title>
+          2026 August Activities Calendar for Kids, Printable Digital Download
+        </h1>
+
+        <div data-buy-box-region="price">
+          <span class="currency-symbol">$</span><span class="currency-value">2.59</span>
+        </div>
+
+        <!-- Star widget: the review count exists only in the accessible label. -->
+        <span data-stars-svg-container aria-label="Rating: 4.94 out of 5 stars, 132 reviews">
+          <input type="hidden" name="rating" value="4.94" />
+          <input type="hidden" name="initial-rating" value="5" />
+          <span class="wt-screen-reader-only">5 out of 5 stars</span>
+        </span>
+
+        <a href="/listing/4451164796/2026-august-activities-calendar/favoriters">11 favorites</a>
+      </div>
+
+      <section class="shop-section">
+        <a href="/shop/KidsPlanPrintables?ref=shop-header-name">
+          <span data-shop-name="KidsPlanPrintables">KidsPlanPrintables</span>
+        </a>
+        <p class="wt-text-caption">779 sales</p>
+        <!-- Tenure, not a start year. The parser must not invent one. -->
+        <p class="wt-text-caption">11 months on Etsy</p>
+      </section>
+
+      <section data-product-details-container>
+        <h2>Item details</h2>
+        <ul>
+          <li>Digital download</li>
+          <li>Digital file type(s): 2 JPG, 2 PDF</li>
+          <li>Listed on Jul 28, 2026</li>
+        </ul>
+        <p data-product-details-description-text-content>
+          Get your family organised for August 2026 with this printable activities
+          calendar. Two page sizes are included (A4 and US Letter) as both JPG and
+          PDF, so you can print at home with no software required. Colour in a
+          square for every activity completed.
+        </p>
+      </section>
+
+      <!-- The tags module ships as an empty placeholder and fetches its content
+           after load: no /market/ links exist in the served HTML. -->
+      <div
+        data-appears-component-name="listing_page_tags"
+        data-click-queries="tags_module_loaded"
+      ></div>
+
+      <section id="reviews" data-reviews-container>
+        <h2>Reviews</h2>
+        <!-- Only one review is rendered server-side; the rest arrive with the
+             JSON-LD array (and, in a real tab, after the reviews pane loads). -->
+        <div data-review-region="tx-88123456">
+          <div aria-label="5 out of 5 stars"></div>
+          <a href="/people/quietmornings">quietmornings</a>
+          <p class="wt-text-caption">Jul 10, 2026</p>
+          <!-- Rendered collapsed: the visible text is a teaser, and the full
+               body is only in the JSON-LD array above. -->
+          <p id="review-preview-toggle-0">
+            My kids filled in the whole month the day it printed.
+          </p>
+          <button type="button" aria-expanded="false">Read more</button>
+          <button type="button">
+            <img src="https://i.etsystatic.com/iap/review9/il_75x75.review9_eeee.jpg" alt="" />
+          </button>
+          <p class="wt-text-caption">Size: A4</p>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

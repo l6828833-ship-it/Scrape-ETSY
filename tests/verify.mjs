@@ -843,6 +843,199 @@ await test('prefers whichever description source has more text', () => {
   assert.equal(D.pickLongestText(['x'.repeat(25000)]).length, 20001, 'capped with an ellipsis');
 });
 
+// ------------------------------------------- deep scrape: real-page structures
+
+group('Listing detail parser (structures seen on a real listing page)');
+
+const liveShapeHtml = readFileSync(
+  path.join(root, 'tests/fixtures/etsy-listing-page-live-shape.html'), 'utf8',
+);
+
+await test('reads the category from the Product "<"-separated string', () => {
+  const ld = D.fromJsonLd(liveShapeHtml);
+  assert.equal(ld.categoryPath, undefined, 'this page publishes no BreadcrumbList');
+  assert.equal(ld.categoryPathFallback,
+    'Paper & Party Supplies > Paper > Calendars & Planners',
+    'broadest segment stays first');
+});
+
+await test('the "<" category is only a fallback, never a breadcrumb override', () => {
+  const record = D.finalizeDetail(
+    { categoryPathFallback: 'A > B' },
+    { categoryPath: 'Home & Living > Office' },
+    {}, [],
+  );
+  assert.equal(record.categoryPath, 'Home & Living > Office');
+});
+
+await test('recovers reviews from the JSON-LD review array', () => {
+  const reviews = D.reviewsFromJsonLd(liveShapeHtml);
+  assert.equal(reviews.length, 3);
+  const [first] = reviews;
+  assert.equal(first.reviewer, 'quietmornings');
+  assert.equal(first.rating, 5);
+  assert.equal(first.date, '2026-07-10');
+  assert.match(first.comment, /^My kids filled in the whole month/);
+  assert.equal(first.photoCount, null,
+    'JSON-LD says nothing about attachments, so 0 would be a claim it cannot make');
+  assert.equal(first.photos, null);
+  assert.equal(reviews[2].rating, 4, 'the 4-star outlier is not rounded away');
+});
+
+await test('only the Product node contributes reviews', () => {
+  // A shop-level or related-product review array must not be stamped with this
+  // listing's id.
+  const html = `<script type="application/ld+json">${JSON.stringify({
+    '@graph': [
+      {
+        '@type': 'Organization',
+        name: 'KidsPlanPrintables',
+        review: [{ '@type': 'Review', reviewBody: 'Great shop overall, fast replies every time.', reviewRating: { ratingValue: 5 } }],
+      },
+      {
+        '@type': 'Product',
+        name: 'The listing',
+        review: [{ '@type': 'Review', reviewBody: 'The calendar itself printed perfectly.', reviewRating: { ratingValue: 5 } }],
+      },
+    ],
+  })}</script>`;
+  const reviews = D.reviewsFromJsonLd(html);
+  assert.equal(reviews.length, 1);
+  assert.match(reviews[0].comment, /^The calendar itself/);
+});
+
+await test('a schema.org review headline is not exported as the comment', () => {
+  const html = `<script type="application/ld+json">${JSON.stringify({
+    '@type': 'Product',
+    review: [{ '@type': 'Review', name: 'Five stars!', reviewRating: { ratingValue: 5 } }],
+  })}</script>`;
+  const reviews = D.reviewsFromJsonLd(html);
+  assert.equal(reviews.length, 1);
+  assert.equal(reviews[0].comment, null, 'a title is not a review body');
+  assert.equal(reviews[0].rating, 5, 'but the rating is still real');
+});
+
+await test('fetch mode gets reviews with no DOM at all', () => {
+  // Before this, `html`-only runs (the fetch engine) always returned zero
+  // reviews, because reviews were parsed exclusively from a live document.
+  const out = D.parseListingPage({ html: liveShapeHtml, context: { listingId: '4451164796' } });
+  assert.equal(out.reviews.length, 3);
+  assert.equal(out.counts.reviewsFromJsonLd, 3);
+  assert.equal(out.record.reviewsCaptured, 3);
+  assert.equal(out.reviews[0].listingId, '4451164796');
+  assert.equal(out.reviews[0].listingTitle, out.record.title);
+});
+
+await test('a review present in both sources appears once', () => {
+  const dom = [{ reviewer: 'quietmornings', rating: 5, date: '2026-07-10', photoCount: 1, photos: ['x'], variation: 'Size: A4', comment: 'My kids filled in the whole month the day it printed.' }];
+  const ld = D.reviewsFromJsonLd(liveShapeHtml);
+  const merged = D.mergeReviews(dom, ld);
+  assert.equal(merged.length, 3, 'the duplicate collapsed');
+  assert.equal(merged[0].photoCount, 1, 'and the richer DOM copy was kept');
+  assert.equal(merged[0].variation, 'Size: A4');
+  assert.match(merged[0].comment, /Colours came out great/,
+    'the collapsed teaser was replaced by the full body');
+});
+
+const LONG_REVIEW = 'This printed perfectly and the colours are exactly as shown in the photos';
+
+await test('distinct reviews are not collapsed by a shared opening', () => {
+  assert.equal(
+    D.isSameReview({ reviewer: 'x', date: '2026-07-01', comment: 'Love it! Thank you' },
+      { reviewer: 'y', date: '2026-07-02', comment: 'Love it! Thank you' }),
+    false, 'too short to be evidence of a repeat',
+  );
+  assert.equal(
+    D.isSameReview({ comment: LONG_REVIEW }, { comment: `${LONG_REVIEW} — will buy again` }),
+    true, 'a teaser and its continuation are one review',
+  );
+  assert.equal(
+    D.isSameReview({ reviewer: 'annaK', date: '2026-06-02', comment: 'teaser' },
+      { reviewer: 'annak', date: '2026-06-02', comment: 'a completely different body' }),
+    true, 'same reviewer and date on one listing is conclusive',
+  );
+});
+
+await test('a known mismatch vetoes an identical body', () => {
+  // Two buyers can post word-for-word the same thing. Different day or different
+  // name means two reviews, however identical they read.
+  assert.equal(
+    D.isSameReview({ reviewer: 'ana', date: '2026-06-02', comment: LONG_REVIEW },
+      { reviewer: 'bea', date: '2026-06-02', comment: LONG_REVIEW }),
+    false, 'different reviewers',
+  );
+  assert.equal(
+    D.isSameReview({ reviewer: 'ana', date: '2026-06-02', comment: LONG_REVIEW },
+      { reviewer: 'ana', date: '2026-06-09', comment: LONG_REVIEW }),
+    false, 'different dates',
+  );
+  assert.equal(
+    D.isSameReview({ comment: LONG_REVIEW }, { reviewer: 'ana', comment: LONG_REVIEW }),
+    true, 'an unknown field is not a mismatch',
+  );
+});
+
+await test('a "Read more" affordance does not defeat the dedupe', () => {
+  // The DOM teaser can end in the expander's own label, which would break a
+  // naive prefix comparison and export the review twice.
+  assert.equal(
+    D.isSameReview({ comment: `${LONG_REVIEW}… Read more` }, { comment: `${LONG_REVIEW} and again` }),
+    true,
+  );
+});
+
+await test('a reviewer+date match never grafts on a different body', () => {
+  const dom = [{
+    reviewer: 'annaK', date: '2026-06-02', rating: 4, photoCount: 2,
+    photos: ['a', 'b'], variation: 'Size: A4', comment: 'Trimmed the margins myself.',
+  }];
+  const merged = D.mergeReviews(dom, [{
+    reviewer: 'annaK', date: '2026-06-02', rating: 4, photoCount: null, photos: null,
+    variation: null, comment: 'An entirely different sentence about something else.',
+  }]);
+  assert.equal(merged.length, 1, 'still recognised as one review');
+  assert.equal(merged[0].comment, 'Trimmed the margins myself.',
+    'the DOM body is kept, because the two texts are not the same text continued');
+  assert.equal(merged[0].photoCount, 2);
+});
+
+await test('a review count is always a whole number', () => {
+  // The star widget's label carries "4.94" as the rating right next to the count,
+  // and dot-grouping locales write "1.204" for 1,204 — neither may be exported as
+  // a fractional review count.
+  assert.equal(P.parseCountToken('1,204'), 1204);
+  assert.equal(P.parseCountToken('1.204'), 1204, 'dots group thousands here');
+  assert.equal(P.parseCountToken('4.94'), null, 'that is the rating, not a count');
+  assert.equal(P.parseCountToken('12,5'), null);
+  assert.equal(P.parseCountToken('779'), 779);
+  assert.equal(P.parseCountToken('1 204'), 1204);
+  assert.equal(P.parseCountToken('none'), null);
+  assert.equal(P.parseCountToken(''), null);
+});
+
+await test('reads shop tenure stated as a duration', () => {
+  const age = (blob) => D.readShopAgeMonths(null, blob);
+  assert.equal(age('KidsPlanPrintables 779 sales 11 months on Etsy'), 11);
+  assert.equal(age('3 years on Etsy'), 36);
+  assert.equal(age('1 year selling on Etsy'), 12);
+  assert.equal(age('On Etsy since 2019'), null, 'that is shopMemberSince');
+  assert.equal(age('420 years on Etsy'), null, 'implausible, so rejected');
+  assert.equal(age('0 months on Etsy'), null);
+});
+
+await test('a compound tenure adds the units instead of taking the smaller', () => {
+  const age = (blob) => D.readShopAgeMonths(null, blob);
+  assert.equal(age('3 years, 2 months on Etsy'), 38);
+  assert.equal(age('2 years and 6 months on Etsy'), 30);
+  assert.equal(age('1 year 1 month on Etsy'), 13);
+});
+
+await test('a duration is never converted into a start year', () => {
+  // "11 months on Etsy" pins the start date to a range, not a year, so guessing
+  // one would be inventing a fact the page never stated.
+  assert.equal(D.readMemberSince(null, '11 months on Etsy'), null);
+});
+
 await test('a blocked listing page yields no record', () => {
   const out = D.parseListingPage({ html: challengeHtml, context: { listingId: '1' } });
   assert.equal(out.blocked, true);

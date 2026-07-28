@@ -59,10 +59,15 @@
       'span.wt-text-caption.wt-text-truncate',
     ],
     image: ['img.wt-position-absolute', 'img.wt-width-full', 'img[src*="etsystatic"]', 'img'],
-    ratingInput: ['input[name="rating"]'],
+    // `initial-rating` is the second input Etsy renders inside its star widget;
+    // it carries the same value and survives pages that omit `rating`.
+    ratingInput: ['input[name="rating"]', 'input[name="initial-rating"]'],
     // Deliberately no generic "number that looks like a rating" selector: on the
     // live grid `.wt-text-title-01` is the price. See readRating().
     ratingLabel: ['[aria-label*="out of 5"]', '[title*="out of 5"]'],
+    // The wrapper Etsy renders its star SVGs into. It holds the rating inputs and
+    // carries the accessible label that also states the review count.
+    starsContainer: ['[data-stars-svg-container]', '[data-stars]'],
     reviewCount: ['.wt-text-body-smaller', 'p.wt-text-body-smaller', 'span.wt-text-body-smaller'],
   };
 
@@ -429,11 +434,104 @@
 
   /** Elements whose class/attributes declare they are about a star rating. */
   const RATING_CONTEXT = [
-    'input[name="rating"]',
+    'input[name="rating"]', 'input[name="initial-rating"]',
     '[aria-label*="out of 5"]', '[title*="out of 5"]',
     '[class*="rating" i]', '[class*="stars" i]', '[data-rating]',
-    '[data-stars]', '[aria-label*="star" i]',
+    '[data-stars]', '[data-stars-svg-container]', '[aria-label*="star" i]',
   ];
+
+  /**
+   * Where a review-count label may live, most specific first.
+   *
+   * Order is load-bearing: the first label that yields a count wins, so the
+   * purpose-built star-widget selectors must be tried before the broad
+   * class-substring ones, which match anything merely *named* like a rating.
+   */
+  const LABEL_SCOPE = SELECTORS.starsContainer.concat([
+    '[aria-label*="out of 5"]', '[title*="out of 5"]',
+    '[data-rating]', '[data-stars]',
+    '[class*="rating" i]', '[class*="stars" i]',
+    '[aria-label*="star" i]',
+  ]);
+
+  /** The label has to state a rating; "reviews" alone proves nothing. */
+  const RATING_LABEL_SHAPE = /out of 5|\bstars?\b|\brating\b/i;
+  /** …and must be about this listing, not the shop that sells it. */
+  const NOT_THIS_LISTING = /\bshops?\b|\bsellers?\b|\bstores?\b/i;
+
+  /**
+   * Accessible labels attached to the rating widget.
+   *
+   * Etsy states the review count only in the star widget's `aria-label`
+   * ("Rating: 4.94 out of 5 stars, 779 reviews") — the visible DOM shows stars
+   * and nothing else. `textContent` therefore never contains it, which is why
+   * `reviewCount` came back null for most rows on live pages.
+   */
+  function ratingLabelTexts(el) {
+    const out = [];
+    const seen = new Set();
+    const nodes = [];
+    if (el && typeof el.querySelectorAll === 'function') {
+      for (const sel of LABEL_SCOPE) {
+        try {
+          for (const n of el.querySelectorAll(sel)) nodes.push(n);
+        } catch (_) { /* selector unsupported here */ }
+      }
+    }
+    // The card root last: Etsy sometimes labels the whole card, but it is the
+    // least specific place to look.
+    if (el && el.getAttribute) nodes.push(el);
+    for (const node of nodes) {
+      if (!node || !node.getAttribute || seen.has(node)) continue;
+      seen.add(node);
+      for (const attr of ['aria-label', 'title']) {
+        const value = node.getAttribute(attr);
+        if (value) out.push(String(value).replace(/\s+/g, ' ').trim());
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A review-count token, which is always a whole number.
+   *
+   * Rejecting decimals matters: the same label carries "4.9" as the rating, and
+   * a locale that groups with dots would otherwise turn "1.204 reviews" into
+   * 1.204 reviews. A trailing group of one or two digits is a decimal fraction;
+   * a trailing group of three is thousands separation.
+   */
+  function parseCountToken(raw) {
+    const s = String(raw == null ? '' : raw).trim();
+    if (!/^\d[\d.,\s\u00a0]*$/.test(s)) return null;
+    if (/[.,]\d{1,2}$/.test(s)) return null;
+    const digits = s.replace(/[.,\s\u00a0]/g, '');
+    if (!/^\d+$/.test(digits)) return null;
+    const n = Number(digits);
+    return Number.isSafeInteger(n) ? n : null;
+  }
+
+  /**
+   * "Rating: 4.94 out of 5 stars, 779 reviews" → 779
+   *
+   * Two content checks, not just a scope check. A label is only believed if it
+   * actually states a rating, and is discarded if it says it is about the shop:
+   * "See all 8,214 reviews for this shop" sits inside a card and matches the
+   * count regex perfectly, and treating it as the listing's count is exactly the
+   * leak that once gave every listing from one shop the same figure. Element
+   * scope alone cannot tell those apart, because Etsy names the shop's rating
+   * widget "rating" too.
+   */
+  function reviewCountFromLabels(el) {
+    for (const label of ratingLabelTexts(el)) {
+      if (!RATING_LABEL_SHAPE.test(label)) continue;
+      if (NOT_THIS_LISTING.test(label)) continue;
+      const m = label.match(/([\d.,]+)\s*(?:reviews?|ratings?)\b/i);
+      if (!m) continue;
+      const n = parseCountToken(m[1]);
+      if (n !== null) return n;
+    }
+    return null;
+  }
 
   /**
    * Read a star rating, in descending order of trust.
@@ -497,8 +595,23 @@
    * @param {boolean} hasRating only trust a bare "(n)" when stars were found
    */
   function readReviewCount(el, hasRating) {
+    // Most trustworthy source on live pages: the star widget's own label.
+    //
+    // Note where this sits relative to runner.resolveAmbiguousReviewCounts(),
+    // the cross-row net that clears shop totals: that net only examines rows
+    // with no rating, and a label that states a count states a rating too, so
+    // label-sourced rows never reach it. The content checks inside
+    // reviewCountFromLabels() are therefore the only guard these rows get, which
+    // is why they reject anything mentioning a shop rather than merely
+    // preferring listing-scoped elements.
+    const labelled = reviewCountFromLabels(el);
+    if (labelled !== null) return labelled;
+
     const explicit = text(el).match(/([\d.,]+)\s*(?:reviews?|ratings?)\b/i);
-    if (explicit) return toNumber(explicit[1]);
+    if (explicit) {
+      const n = parseCountToken(explicit[1]);
+      if (n !== null) return n;
+    }
 
     if (!hasRating) {
       // No stars found. A single "(1,204)" in the card is still the listing's
@@ -508,7 +621,7 @@
       const tokens = text(el).match(/\((\d[\d.,\s]*)\)/g) || [];
       if (tokens.length !== 1) return null;
       const only = tokens[0].match(/\((\d[\d.,\s]*)\)/);
-      return only ? toNumber(only[1]) : null;
+      return only ? parseCountToken(only[1]) : null;
     }
 
     const container = ratingContainer(el);
@@ -518,16 +631,20 @@
       const t = text(node);
       if (t.length > 12) continue;
       const m = t.match(/^\((\d[\d.,\s]*)\)$/);
-      if (m) return toNumber(m[1]);
+      if (m) {
+        const n = parseCountToken(m[1]);
+        if (n !== null) return n;
+      }
     }
     const loose = text(scope).match(/\((\d[\d.,\s]*)\)/);
-    return loose ? toNumber(loose[1]) : null;
+    return loose ? parseCountToken(loose[1]) : null;
   }
 
   /** The smallest element that holds the rating, used to scope the count. */
   function ratingContainer(el) {
     const anchor = firstMatch(el, SELECTORS.ratingInput)
-      || firstMatch(el, ['[aria-label*="out of 5"]', '[title*="out of 5"]']);
+      || firstMatch(el, ['[aria-label*="out of 5"]', '[title*="out of 5"]'])
+      || firstMatch(el, SELECTORS.starsContainer);
     if (!anchor) return null;
     let node = anchor.parentElement;
     for (let depth = 0; node && depth < 3; depth += 1) {
@@ -776,6 +893,9 @@
     finalize,
     readRating,
     readReviewCount,
+    reviewCountFromLabels,
+    ratingLabelTexts,
+    parseCountToken,
     cleanShopName,
     hasBadge,
     parseCard,
