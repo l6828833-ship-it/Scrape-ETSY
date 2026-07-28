@@ -156,7 +156,16 @@ export const DETAIL_FIELDS = [
   // Third-party estimates read from the EHunt panel when it is on the page.
   // Prefixed so they are never mistaken for figures Etsy published.
   'ehuntEstimatedSales', 'ehuntEstimatedRevenue', 'ehuntConversionRate',
-  'ehuntReviewRatio', 'ehuntPanel',
+  'ehuntReviewRatio', 'ehuntShopRating', 'ehuntStock', 'ehuntBestSeller',
+  // EHunt's own price view: normalised to USD, so kept separate from `price`
+  // rather than merged into it.
+  'ehuntPrice', 'ehuntOriginalPrice', 'ehuntDiscountPercent', 'ehuntCurrency',
+  'ehuntShipsFrom',
+  // Period-over-period deltas EHunt shows beside each figure. Signed, and only
+  // present when the arrow's direction was unambiguous — see growthDirection().
+  'ehuntSalesGrowth', 'ehuntRevenueGrowth', 'ehuntViewsGrowth',
+  'ehuntReviewsGrowth', 'ehuntFavoritesGrowth', 'ehuntShopSalesGrowth',
+  'ehuntPanel',
   // product type: true = instant/digital download, false = physical,
   // null = the page never said (never guessed from price or category)
   'isDigital', 'productType',
