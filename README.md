@@ -13,7 +13,7 @@ extension/            unpacked MV3 extension (this is what you load in Chrome)
   src/offscreen/      offscreen document (gives the worker a DOMParser)
   src/content/        script injected into Etsy tabs (lazy-load scroll + parse)
   src/ui/             popup / dashboard, exporters, dependency-free XLSX writer
-tests/                offline fixtures + 213 automated checks
+tests/                offline fixtures + 217 automated checks
 tools/                icon generator, workbook validator, check runner
 ```
 
@@ -182,13 +182,9 @@ Two of these need a note on how they are decided:
   breadcrumb, and finally the `Product.category` string, which Etsy writes with
   `<` separators, broadest first ("Paper & Party Supplies < Paper < …"). Some
   listing pages publish only that last form.
-- **`tags`** are harvested from links Etsy renders on the page, and on many
-  listings the tags module is a **lazy-loaded placeholder** — the served HTML
-  contains no `/market/` links at all. Tag harvesting therefore needs the tab
-  engine (`Engine: tab`), where the module has actually loaded; a fetch-mode run
-  will legitimately return `tags: null` on those listings. For the literal
-  13-tag array, supply an Etsy API key or enable the EHunt reader — `tagSource`
-  always records which of the three you got.
+- **`tags`** have three possible sources and `tagSource` always records which one
+  produced a row. See [Why is `tags` empty?](#why-is-tags-empty) — it is the most
+  common question about this tool, and the answer is usually one checkbox.
 
 **2. Customer voice** — one row per review: `rating`, `date`, `comment`,
 `reviewer`, `photos` + `photoCount`, and the purchased `variation`. This is the
@@ -241,6 +237,40 @@ Being straight about this, because these are the fields people most often expect
 | sales per listing | Only *shop* totals are public (`shopTotalSales`). Per-listing sales are not, so `reviewsPerDay` and `cartCount` are the honest proxies for conversion. |
 | reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (its JSON-LD array plus the rendered pane) rather than depending on private API shapes. |
 | exact shop start date | Listings show either a year ("On Etsy since 2019" → `shopMemberSince`) or a duration ("11 months on Etsy" → `shopAgeMonths`). Neither is converted into the other, because a duration only pins the start date to a range. |
+
+### Why is `tags` empty?
+
+Etsy does not print a listing's 13 tags anywhere on the page, so this is the one
+field that depends on how you run the tool. Work down the list — the run log now
+names whichever of these applies, so you should not have to guess:
+
+**1. Is the deep scrape even on?** `Scrape listing details` is **off by default**,
+and tags, description, favourites, stock and shop sales are collected *only* in
+that phase — the search grid does not carry them at all. With it off, the run
+says so in the log, and the `Listings` table has no Tags column to look at.
+Tags live in the **Details** dataset, so switch the dataset picker to `details`.
+
+**2. Which source do you want?** In descending fidelity:
+
+| Source | `tagSource` | What you need |
+|---|---|---|
+| Etsy Open API | `api` | A free keystring from [etsy.com/developers/your-apps](https://www.etsy.com/developers/your-apps) pasted into **Etsy API key**. No OAuth, no app review. This is the only route that returns the **literal 13 tags**. |
+| EHunt panel | `ehunt` | The *EHunt – Etsy Rank Tool* extension installed and enabled, plus **Read tags from the EHunt panel** ticked. Gives the real 13 tags *and* a search volume per tag. Forces the tab engine, because a `fetch()` of the HTML is untouched by other extensions. |
+| Page links | `page-links` | Nothing extra, but it is a **proxy**, not the tag list: the `/market/` and related-search links Etsy renders, capped at 13. Requires **Engine: tab**. |
+
+**3. On the page-link route, the module is lazy.** Etsy ships the tag section as
+an empty placeholder and fills it in after load, so there are no `/market/` links
+in the served HTML at all. The tab engine now scrolls that module into view and
+waits for it, which is what triggers the load. A fetch-mode run legitimately
+returns `tags: null` on those listings, and the log distinguishes "the module was
+still an unloaded placeholder" (switch engine) from "no tag section anywhere"
+(Etsy moved the markup — update `SELECTORS.tagsModule`).
+
+**4. On the EHunt route, absent and slow look identical from outside.** The run
+now separates them: EHunt's own markup detected but no tag list means raise
+**EHunt wait** and leave its panel expanded; nothing detected at all means it is
+not installed, not enabled, or not permitted on that page. Its panel is also
+searched inside shadow roots, since injected UIs are commonly mounted in one.
 
 ### If a deep-scrape field comes back empty
 
@@ -466,14 +496,14 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 213 checks, no network and no npm install
+bash tools/run-checks.sh          # 217 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (113) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tests/verify.mjs` (114) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
-| `tests/dom-check.mjs` (53) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus the structures taken from a real Etsy page (review counts published only in the star widget's `aria-label`, a `<`-separated category with no breadcrumb, tenure in months with no start year, JSON-LD reviews merged with the DOM pane, an empty lazy-loaded tags module) and challenge detection |
+| `tests/dom-check.mjs` (56) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus the structures taken from a real Etsy page (review counts published only in the star widget's `aria-label`, a `<`-separated category with no breadcrumb, tenure in months with no start year, JSON-LD reviews merged with the DOM pane, an empty lazy-loaded tags module) and challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
 
 Fixtures are hand-written from the documented public page structure; no Etsy

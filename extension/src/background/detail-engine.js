@@ -165,6 +165,8 @@ export async function fetchDetailViaTab(url, opts = {}) {
       reviews: result.reviews || [],
       counts: result.counts,
       ehuntFound: Boolean(result.ehuntFound),
+      ehuntOnPage: Boolean(result.ehuntOnPage),
+      ehuntTagCount: result.ehuntTagCount || 0,
     };
   } catch (err) {
     return {
