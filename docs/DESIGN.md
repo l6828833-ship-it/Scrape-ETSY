@@ -162,15 +162,7 @@ rot is visible in the data rather than silent.
   whether shipping is free.
 - **Sponsored detection is heuristic** — Etsy labels ads inconsistently across
   layouts. Treat `sponsored: true` as high-confidence, `false` as "no label
-  seen". This is also the reason `excludeSponsored` is a *row* filter rather
-  than a URL facet: Etsy offers no "hide ads" parameter, so the ads are fetched
-  and then discarded (they still consume page budget, and the count is surfaced
-  in the UI so the loss is visible).
-- **Facet filters are trusted, not re-checked.** `bestsellerOnly` and
-  `freeShippingOnly` are pushed into the URL (`is_best_seller=true`,
-  `free_shipping=true`, both with `explicit=1`) and the returned rows are kept
-  as-is. Re-filtering locally on our own badge detection would compound a
-  best-effort signal with a server-side guarantee and drop good rows.
+  seen".
 - **No scheduling.** Runs are user-initiated by design; a browser extension is
   the wrong place for a cron job. For unattended, continuous collection, Option
   C from the README (a hosted actor/API) remains the right tool.

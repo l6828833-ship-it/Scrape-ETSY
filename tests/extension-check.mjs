@@ -441,8 +441,7 @@ try {
       await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: {
         queries: ['handmade ceramic mug', '', ' linen apron '],
         maxPagesPerQuery: 999, maxConcurrency: 99, sortOrder: 'price_asc',
-        shipTo: 'de', minPrice: '15', engine: 'not-an-engine',
-        bestsellerOnly: true, excludeSponsored: true
+        shipTo: 'de', minPrice: '15', engine: 'not-an-engine'
       }});
       return JSON.stringify(await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }));
     })()`);
@@ -454,32 +453,6 @@ try {
     assert.equal(result.shipTo, 'DE');
     assert.equal(result.minPrice, 15);
     assert.equal(result.engine, 'hybrid', 'invalid enum falls back to the default');
-    assert.equal(result.bestsellerOnly, true);
-    assert.equal(result.excludeSponsored, true);
-  });
-
-  await test('bestseller filter reaches the URL built inside the extension', async () => {
-    const url = await ui.evaluate(`(async () => {
-      const { buildSearchUrl } = await import('/src/common/url-builder.js');
-      return buildSearchUrl({ query: '2026 calendar printable', bestsellerOnly: true });
-    })()`);
-    const u = new URL(url);
-    assert.equal(u.searchParams.get('is_best_seller'), 'true');
-    assert.equal(u.searchParams.get('explicit'), '1');
-  });
-
-  await test('the new filter checkboxes are wired to the form', async () => {
-    const raw = await ui.evaluate(`(async () => {
-      document.getElementById('bestsellerOnly').checked = true;
-      document.getElementById('excludeSponsored').checked = true;
-      document.getElementById('bestsellerOnly').dispatchEvent(new Event('change'));
-      document.getElementById('excludeSponsored').dispatchEvent(new Event('change'));
-      await new Promise(r => setTimeout(r, 400));
-      return JSON.stringify(await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' }));
-    })()`);
-    const { result } = JSON.parse(raw);
-    assert.equal(result.bestsellerOnly, true, 'checkbox change must persist through the worker');
-    assert.equal(result.excludeSponsored, true);
   });
 
   await test('a run with no queries surfaces an error state', async () => {

@@ -43,12 +43,6 @@ export const DEFAULTS = {
   minPrice: null,
   maxPrice: null,
   shipTo: '',
-  /** Etsy facet `is_best_seller=true` — only listings carrying the badge. */
-  bestsellerOnly: false,
-  /** Etsy facet `free_shipping=true`. */
-  freeShippingOnly: false,
-  /** Drop "Ad by Etsy seller" placements instead of storing them. */
-  excludeSponsored: false,
   /** Random inter-request delay window, milliseconds. */
   minDelayMs: 1000,
   maxDelayMs: 3000,

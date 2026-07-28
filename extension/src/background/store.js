@@ -29,7 +29,6 @@ function freshState() {
       pagesFailed: 0,
       rows: 0,
       duplicates: 0,
-      adsSkipped: 0,
       retries: 0,
       blocks: 0,
     },
@@ -71,10 +70,6 @@ export function normalizeSettings(input) {
   s.maxDelayMs = clampInt(s.maxDelayMs, s.minDelayMs, 300000, Math.max(s.minDelayMs, DEFAULTS.maxDelayMs));
   s.resultsPerPage = clampInt(s.resultsPerPage, 1, 200, DEFAULTS.resultsPerPage);
   s.positionMode = s.positionMode === 'global' ? 'global' : 'per_page';
-  for (const flag of ['bestsellerOnly', 'freeShippingOnly', 'excludeSponsored',
-    'stopOnEmptyPage', 'manualCaptchaSolve', 'keepTabsOpen']) {
-    s[flag] = Boolean(s[flag]);
-  }
   s.dedupe = ['off', 'per_query', 'global'].includes(s.dedupe) ? s.dedupe : DEFAULTS.dedupe;
   s.engine = ['fetch', 'tab', 'hybrid'].includes(s.engine) ? s.engine : DEFAULTS.engine;
   s.minPrice = toNumOrNull(s.minPrice);

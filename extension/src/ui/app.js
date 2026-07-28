@@ -24,9 +24,6 @@ const FIELD_BINDINGS = [
   ['engine', 'engine', 'text'],
   ['dedupe', 'dedupe', 'text'],
   ['positionMode', 'positionMode', 'text'],
-  ['bestsellerOnly', 'bestsellerOnly', 'bool'],
-  ['excludeSponsored', 'excludeSponsored', 'bool'],
-  ['freeShippingOnly', 'freeShippingOnly', 'bool'],
   ['stopOnEmptyPage', 'stopOnEmptyPage', 'bool'],
   ['manualCaptchaSolve', 'manualCaptchaSolve', 'bool'],
   ['keepTabsOpen', 'keepTabsOpen', 'bool'],
@@ -129,7 +126,6 @@ function renderState(state, rowCount, running) {
   el('statPages').textContent = `${fmt(done)} / ${fmt(planned)}`;
   el('statQueries').textContent = `${fmt(p.queriesDone || 0)} / ${fmt(p.queriesTotal || 0)}`;
   el('statDupes').textContent = fmt(p.duplicates || 0);
-  el('statAds').textContent = fmt(p.adsSkipped || 0);
   el('statRetries').textContent = fmt(p.retries || 0);
   el('statBlocks').textContent = fmt(p.blocks || 0);
   el('statusMessage').textContent = state.message || (running ? 'Working…' : 'Ready.');

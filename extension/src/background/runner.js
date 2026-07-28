@@ -104,22 +104,6 @@ class Dedupe {
 }
 
 /**
- * Row-level filters applied to every parsed page.
- *
- * Note we do NOT filter on `bestseller` when `bestsellerOnly` is set: Etsy's
- * `is_best_seller=true` facet already restricts the result set server-side, and
- * badge detection in the DOM is only best-effort — filtering locally as well
- * would silently drop valid rows whose badge we failed to see.
- *
- * @returns {{rows:Array<object>, adsSkipped:number}}
- */
-export function applyRowFilters(records, settings) {
-  if (!settings || !settings.excludeSponsored) return { rows: records, adsSkipped: 0 };
-  const rows = records.filter((r) => !r.sponsored);
-  return { rows, adsSkipped: records.length - rows.length };
-}
-
-/**
  * Kick off a scraping run. Resolves when the run finishes or is stopped.
  * @param {object} rawSettings see DEFAULTS in common/constants.js
  */
@@ -146,7 +130,6 @@ export async function startRun(rawSettings) {
       pagesFailed: 0,
       rows: 0,
       duplicates: 0,
-      adsSkipped: 0,
       retries: 0,
       blocks: 0,
     },
@@ -262,8 +245,6 @@ async function processTask(ctx, task, label) {
     minPrice: settings.minPrice,
     maxPrice: settings.maxPrice,
     shipTo: settings.shipTo,
-    bestsellerOnly: settings.bestsellerOnly,
-    freeShippingOnly: settings.freeShippingOnly,
   });
 
   const context = {
@@ -344,20 +325,15 @@ async function processTask(ctx, task, label) {
       return;
     }
 
-    // Row-level filters run before de-duplication so the dupe count stays
-    // meaningful, and after the empty-page check above so that a page made up
-    // entirely of ads is not mistaken for the end of the results.
-    const { rows: filtered, adsSkipped } = applyRowFilters(records, settings);
-    const { kept, duplicates } = ctx.dedupe.filter(filtered, task.query);
+    const { kept, duplicates } = ctx.dedupe.filter(records, task.query);
     const stored = await store.addRows(kept);
-    await store.bumpProgress({ pagesDone: 1, rows: stored, duplicates, adsSkipped });
+    await store.bumpProgress({ pagesDone: 1, rows: stored, duplicates });
     if (task.page >= settings.maxPagesPerQuery
       && ctx.scheduler.markDone(task.queueIndex, 'page limit')) {
       await store.bumpProgress({ queriesDone: 1 });
     }
     await store.log('success',
-      `${label} -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''}`
-      + `${adsSkipped ? ` (${adsSkipped} ads skipped)` : ''} via ${engine}`
+      `${label} -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''} via ${engine}`
       + ` [ld:${outcome.counts.jsonld} dom:${outcome.counts.dom}]`);
     return;
   }
@@ -470,14 +446,12 @@ export async function scrapeActiveTab() {
   for (const row of existing) {
     if (row.listingId) dedupe.global.add(row.listingId);
   }
-  const { rows: filtered, adsSkipped } = applyRowFilters(res.result.records, settings);
-  const { kept, duplicates } = dedupe.filter(filtered, query);
+  const { kept, duplicates } = dedupe.filter(res.result.records, query);
   const stored = await store.addRows(kept);
-  await store.bumpProgress({ rows: stored, duplicates, adsSkipped, pagesDone: 1 });
-  await store.log('success', `Current tab -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''}`
-    + `${adsSkipped ? ` (${adsSkipped} ads skipped)` : ''}`);
+  await store.bumpProgress({ rows: stored, duplicates, pagesDone: 1 });
+  await store.log('success', `Current tab -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''}`);
   await store.persistNow();
   return { rows: stored, duplicates, total: (await store.getRows()).length };
 }
 
-export const __testing = { Scheduler, Dedupe, applyRowFilters, LIMITS };
+export const __testing = { Scheduler, Dedupe, LIMITS };
