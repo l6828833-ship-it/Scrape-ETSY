@@ -150,7 +150,10 @@
           </fieldset>
           <label class="field narrow">
             <span class="label">EHunt wait (ms)</span>
-            <input id="ehuntWaitMs" type="number" min="0" max="60000" step="500" />
+            <input id="ehuntWaitMs" type="number" min="0" max="120000" step="500" />
+            <span class="hint">Budget per listing for EHunt's tag table. The wait keeps going
+              past this while the panel is still filling in, and stops early when EHunt
+              is not installed.</span>
           </label>
 
           <p class="warn" id="deepCost">

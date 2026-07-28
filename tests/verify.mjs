@@ -425,14 +425,77 @@ await test('the visible window is the default', () => {
 await test('tabMode and the EHunt wait are validated', () => {
   assert.equal(normalizeSettings({ tabMode: 'sideways' }).tabMode, 'window');
   assert.equal(normalizeSettings({ tabMode: 'foreground' }).tabMode, 'foreground');
-  assert.equal(normalizeSettings({ ehuntWaitMs: 999999 }).ehuntWaitMs, 60000);
+  assert.equal(normalizeSettings({ ehuntWaitMs: 999999 }).ehuntWaitMs, 120000);
   assert.equal(normalizeSettings({ ehuntWaitMs: -5 }).ehuntWaitMs, 0);
 });
 
 group('EHunt panel (numbers and merge rules)');
 
+
 await import(path.join(ext, 'src/common/ehunt-parse.js'));
 const EH = globalThis.EtsyEhunt;
+
+await test('the wait stops as soon as the tag table is in', () => {
+  const keep = (s) => EH.shouldKeepWaitingForEhunt(s);
+  assert.equal(
+    keep({ bestStage: 4, elapsedMs: 100, budgetMs: 20000, sinceProgressMs: 0 }),
+    false, 'stage 4 is the whole point of waiting',
+  );
+});
+
+await test('an absent EHunt is abandoned after the probe window', () => {
+  // Without this, a run in a browser with no EHunt pays the full budget on every
+  // single listing while waiting for something that will never arrive.
+  const keep = (s) => EH.shouldKeepWaitingForEhunt(s);
+  assert.equal(
+    keep({ bestStage: 0, elapsedMs: 1000, budgetMs: 20000, sinceProgressMs: 1000 }),
+    true, 'still inside the probe window',
+  );
+  assert.equal(
+    keep({ bestStage: 0, elapsedMs: EH.WAIT.PROBE_MS, budgetMs: 20000, sinceProgressMs: 3000 }),
+    false, 'nothing seen by now, so waiting longer is futile',
+  );
+});
+
+await test('a panel that is still filling in buys more time', () => {
+  // The behaviour asked for: the table takes seconds, so keep waiting for it.
+  const keep = (s) => EH.shouldKeepWaitingForEhunt(s);
+  assert.equal(
+    keep({ bestStage: 2, elapsedMs: 5000, budgetMs: 20000, sinceProgressMs: 500 }),
+    true, 'inside the budget',
+  );
+  assert.equal(
+    keep({ bestStage: 3, elapsedMs: 25000, budgetMs: 20000, sinceProgressMs: 800 }),
+    true, 'past the budget, but it just advanced a stage — keep going',
+  );
+  assert.equal(
+    keep({ bestStage: 3, elapsedMs: 25000, budgetMs: 20000,
+      sinceProgressMs: EH.WAIT.PROGRESS_GRACE_MS }),
+    false, 'past the budget and no longer progressing',
+  );
+});
+
+await test('the wait cannot outlast the hard ceiling', () => {
+  // A permanently half-rendered panel must not stall a whole run.
+  assert.equal(
+    EH.shouldKeepWaitingForEhunt({
+      bestStage: 3, elapsedMs: EH.WAIT.HARD_MAX_MS, budgetMs: 20000, sinceProgressMs: 0,
+    }),
+    false,
+  );
+  assert.equal(
+    EH.shouldKeepWaitingForEhunt({
+      bestStage: 3, elapsedMs: 50000, budgetMs: 60000, sinceProgressMs: 0,
+    }),
+    true, 'a budget above the ceiling is still honoured — the user asked for it',
+  );
+  assert.equal(
+    EH.shouldKeepWaitingForEhunt({
+      bestStage: 3, elapsedMs: 61000, budgetMs: 60000, sinceProgressMs: 0,
+    }),
+    false, 'but past their own budget as well as the ceiling, it stops',
+  );
+});
 
 await test('parses compact numbers, percentages and N/A', () => {
   assert.equal(EH.parseCompactNumber(' (14.8M) '), 14800000);

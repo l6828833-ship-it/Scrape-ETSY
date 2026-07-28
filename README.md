@@ -289,6 +289,33 @@ now separates them: EHunt's own markup detected but no tag list means raise
 not installed, not enabled, or not permitted on that page. Its panel is also
 searched inside shadow roots, since injected UIs are commonly mounted in one.
 
+#### Waiting for the tag table, not just the panel
+
+EHunt's panel mounts in well under a second, but it then fetches that listing's
+figures from its own service and draws the tag table **several seconds later**.
+Waiting for the panel to merely *exist* therefore read it while the tag row was
+still empty and reported "no tags" for a listing that was about to have all
+thirteen. So the wait follows the panel's progress instead of a flat clock:
+
+| Stage | Meaning | What the wait does |
+|---|---|---|
+| 0 | no trace of EHunt | gives up after ~3s, so a browser without EHunt does not pay the full budget on every listing |
+| 1 | EHunt present, panel not drawn | waits |
+| 2 | panel frame up, empty | waits, and scrolls the panel into view since it can defer work while off-screen |
+| 3 | stats table in, tag row missing | waits |
+| 4 | tag table rendered | reads it and moves on immediately |
+
+Every time the panel advances a stage it earns another 10s, because visible
+progress is evidence that waiting will pay off, whereas silence is evidence that
+it will not — only progress buys more time. **EHunt wait** (default 20s, max
+120s) is the base budget; a 45s ceiling stops a permanently half-drawn panel
+stalling the run. If the tags still never arrive, the log names the furthest
+stage reached, e.g. `panel frame appeared but stayed empty`, which says whether
+to wait longer or to go and check EHunt itself.
+
+Whatever did render is kept either way, so a listing that times out mid-load
+still contributes the stats EHunt had already drawn.
+
 ### If a deep-scrape field comes back empty
 
 The run now tells you. Each listing logs what it found — `1482 favs, 940 chars
