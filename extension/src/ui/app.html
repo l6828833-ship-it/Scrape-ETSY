@@ -67,6 +67,21 @@
           </label>
         </div>
 
+        <div class="filters">
+          <label class="check">
+            <input id="bestsellerOnly" type="checkbox" />
+            <span><strong>Bestsellers only</strong> — adds Etsy's <code>is_best_seller=true</code> filter</span>
+          </label>
+          <label class="check">
+            <input id="excludeSponsored" type="checkbox" />
+            <span><strong>Skip ads</strong> — discard "Ad by Etsy seller" placements</span>
+          </label>
+          <label class="check">
+            <input id="freeShippingOnly" type="checkbox" />
+            <span>Free shipping only</span>
+          </label>
+        </div>
+
         <details id="advanced" class="advanced">
           <summary>Advanced</summary>
           <div class="grid">
@@ -169,6 +184,7 @@
           <div><dt>Pages</dt><dd id="statPages">0 / 0</dd></div>
           <div><dt>Queries</dt><dd id="statQueries">0 / 0</dd></div>
           <div><dt>Dupes</dt><dd id="statDupes">0</dd></div>
+          <div><dt>Ads skipped</dt><dd id="statAds">0</dd></div>
           <div><dt>Retries</dt><dd id="statRetries">0</dd></div>
           <div><dt>Blocks</dt><dd id="statBlocks">0</dd></div>
         </dl>

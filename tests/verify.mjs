@@ -101,6 +101,29 @@ await test('ignores unknown sort orders and blank filters', () => {
   assert.equal(url.searchParams.get('ship_to'), null);
 });
 
+await test('bestsellerOnly adds the is_best_seller facet plus explicit=1', () => {
+  const url = new URL(buildSearchUrl({ query: '2026 calendar printable', bestsellerOnly: true }));
+  assert.equal(url.searchParams.get('q'), '2026 calendar printable');
+  assert.equal(url.searchParams.get('is_best_seller'), 'true');
+  assert.equal(url.searchParams.get('explicit'), '1');
+});
+
+await test('free shipping and bestseller facets combine', () => {
+  const url = new URL(buildSearchUrl({
+    query: 'linen apron', bestsellerOnly: true, freeShippingOnly: true, minPrice: 20,
+  }));
+  assert.equal(url.searchParams.get('is_best_seller'), 'true');
+  assert.equal(url.searchParams.get('free_shipping'), 'true');
+  assert.equal(url.searchParams.get('min'), '20');
+  assert.equal(url.searchParams.get('explicit'), '1');
+});
+
+await test('explicit=1 is omitted when no facet is active', () => {
+  const url = new URL(buildSearchUrl({ query: 'mug' }));
+  assert.equal(url.searchParams.get('explicit'), null);
+  assert.equal(url.searchParams.get('is_best_seller'), null);
+});
+
 await test('rejects an empty query', () => {
   assert.throws(() => buildSearchUrl({ query: '   ' }), /query.*required/i);
 });
@@ -329,6 +352,16 @@ await test('normalises prices and country codes', () => {
   assert.equal(s.shipTo, 'US');
 });
 
+await test('coerces the filter flags to real booleans', () => {
+  const s = normalizeSettings({ bestsellerOnly: 'on', excludeSponsored: 1, freeShippingOnly: null });
+  assert.equal(s.bestsellerOnly, true);
+  assert.equal(s.excludeSponsored, true);
+  assert.equal(s.freeShippingOnly, false);
+  const d = normalizeSettings({});
+  assert.equal(d.bestsellerOnly, false);
+  assert.equal(d.excludeSponsored, false);
+});
+
 group('Scheduler and de-duplication');
 
 const { __testing: runnerTesting } = await import(path.join(ext, 'src/background/runner.js'));
@@ -368,6 +401,45 @@ await test('dedupe per_query keeps the same listing across different queries', (
   const b = d.filter([{ listingId: '1' }], 'apron');
   assert.equal(b.kept.length, 1, 'other query gets its own namespace');
 });
+
+group('Ad exclusion');
+
+await test('excludeSponsored drops sponsored rows and counts them', () => {
+  const rows = [
+    { listingId: '1', sponsored: false },
+    { listingId: '2', sponsored: true },
+    { listingId: '3', sponsored: false },
+    { listingId: '4', sponsored: true },
+  ];
+  const out = runnerTesting.applyRowFilters(rows, { excludeSponsored: true });
+  assert.deepEqual(out.rows.map((r) => r.listingId), ['1', '3']);
+  assert.equal(out.adsSkipped, 2);
+});
+
+await test('rows pass through untouched when the option is off', () => {
+  const rows = [{ listingId: '1', sponsored: true }, { listingId: '2', sponsored: false }];
+  const out = runnerTesting.applyRowFilters(rows, { excludeSponsored: false });
+  assert.equal(out.rows.length, 2);
+  assert.equal(out.adsSkipped, 0);
+  assert.equal(runnerTesting.applyRowFilters(rows, undefined).rows.length, 2);
+});
+
+await test('bestsellerOnly does not filter rows locally (facet does the work)', () => {
+  // Badge detection is best-effort; filtering locally too would drop good rows.
+  const rows = [{ listingId: '1', bestseller: false }, { listingId: '2', bestseller: true }];
+  const out = runnerTesting.applyRowFilters(rows, { bestsellerOnly: true });
+  assert.equal(out.rows.length, 2);
+});
+
+await test('a page of nothing but ads still yields zero rows without erroring', () => {
+  const out = runnerTesting.applyRowFilters(
+    [{ listingId: '1', sponsored: true }], { excludeSponsored: true },
+  );
+  assert.deepEqual(out.rows, []);
+  assert.equal(out.adsSkipped, 1);
+});
+
+group('Scheduler and de-duplication (continued)');
 
 await test('dedupe global collapses across queries; off keeps everything', () => {
   const g = new runnerTesting.Dedupe('global');
