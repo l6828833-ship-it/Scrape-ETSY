@@ -1,36 +1,86 @@
 /**
  * Serialisation + download helpers. These run in the UI page (not the worker)
  * because Blob/URL.createObjectURL are unavailable in MV3 service workers.
+ *
+ * Three datasets can be exported: the search rows, the listing-detail records,
+ * and the reviews. JSON keeps nested values (variations, tags, photos) as real
+ * arrays/objects; CSV and Excel flatten them, because a spreadsheet cell cannot
+ * hold a list.
  */
 
-import { FIELDS } from '../common/constants.js';
-import { rowsToXlsx } from './xlsx.js';
+import { FIELDS, DETAIL_FIELDS, REVIEW_FIELDS, DATASETS } from '../common/constants.js';
+import { rowsToXlsx, rowsToWorkbook } from './xlsx.js';
 
 /** Internal bookkeeping fields are hidden from exports unless asked for. */
-const INTERNAL = ['_source', '_sourceUrl'];
+const INTERNAL = ['_source', '_sourceUrl', 'detailSource'];
 
-export function pickFields(rows, { includeDebug = false } = {}) {
-  const fields = includeDebug ? [...FIELDS, ...INTERNAL] : [...FIELDS];
+export const DATASET_FIELDS = {
+  [DATASETS.search]: FIELDS,
+  [DATASETS.details]: DETAIL_FIELDS,
+  [DATASETS.reviews]: REVIEW_FIELDS,
+};
+
+export const DATASET_LABELS = {
+  [DATASETS.search]: 'Search rows',
+  [DATASETS.details]: 'Listing details',
+  [DATASETS.reviews]: 'Reviews',
+  [DATASETS.all]: 'All datasets',
+};
+
+/** Arrays/objects become spreadsheet-friendly scalars. */
+function flattenValue(value) {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value)) {
+    if (!value.length) return null;
+    return value
+      .map((item) => {
+        if (item === null || item === undefined) return '';
+        if (typeof item === 'object') {
+          // {name, options[]} variation groups read best as "Size: S | M | L".
+          if (item.name && Array.isArray(item.options)) return `${item.name}: ${item.options.join(' | ')}`;
+          return JSON.stringify(item);
+        }
+        return String(item);
+      })
+      .filter(Boolean)
+      .join('; ');
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return value;
+}
+
+/**
+ * @param {Array<object>} rows
+ * @param {{fields?:string[], includeDebug?:boolean, flatten?:boolean}} [options]
+ */
+export function pickFields(rows, options = {}) {
+  const { fields: requested, includeDebug = false, flatten = false } = options;
+  const base = requested || FIELDS;
+  const extras = includeDebug ? INTERNAL.filter((f) => !base.includes(f)) : [];
+  const fields = [...base, ...extras];
   return {
     fields,
-    rows: rows.map((row) => {
+    rows: (rows || []).map((row) => {
       const out = {};
-      for (const f of fields) out[f] = row[f] === undefined ? null : row[f];
+      for (const f of fields) {
+        const value = row[f] === undefined ? null : row[f];
+        out[f] = flatten ? flattenValue(value) : value;
+      }
       return out;
     }),
   };
 }
 
-export function toJson(rows, { pretty = true, includeDebug = false } = {}) {
-  const { rows: shaped } = pickFields(rows, { includeDebug });
-  return new Blob([JSON.stringify(shaped, null, pretty ? 2 : 0)], {
+export function toJson(rows, options = {}) {
+  const { rows: shaped } = pickFields(rows, options);
+  return new Blob([JSON.stringify(shaped, null, options.pretty === false ? 0 : 2)], {
     type: 'application/json;charset=utf-8',
   });
 }
 
 /** Newline-delimited JSON — friendlier for large datasets / data pipelines. */
-export function toJsonl(rows, { includeDebug = false } = {}) {
-  const { rows: shaped } = pickFields(rows, { includeDebug });
+export function toJsonl(rows, options = {}) {
+  const { rows: shaped } = pickFields(rows, options);
   return new Blob([shaped.map((r) => JSON.stringify(r)).join('\n') + '\n'], {
     type: 'application/x-ndjson;charset=utf-8',
   });
@@ -47,8 +97,9 @@ function csvCell(value, delimiter) {
   return mustQuote ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export function toCsv(rows, { delimiter = ',', bom = true, includeDebug = false } = {}) {
-  const { fields, rows: shaped } = pickFields(rows, { includeDebug });
+export function toCsv(rows, options = {}) {
+  const { delimiter = ',', bom = true } = options;
+  const { fields, rows: shaped } = pickFields(rows, { ...options, flatten: true });
   const lines = [fields.join(delimiter)];
   for (const row of shaped) {
     lines.push(fields.map((f) => csvCell(row[f], delimiter)).join(delimiter));
@@ -58,9 +109,33 @@ export function toCsv(rows, { delimiter = ',', bom = true, includeDebug = false 
   return new Blob([body], { type: 'text/csv;charset=utf-8' });
 }
 
-export function toXlsx(rows, { includeDebug = false } = {}) {
-  const { fields, rows: shaped } = pickFields(rows, { includeDebug });
-  return rowsToXlsx(shaped, fields);
+export function toXlsx(rows, options = {}) {
+  const { fields, rows: shaped } = pickFields(rows, { ...options, flatten: true });
+  return rowsToXlsx(shaped, fields, options.sheetName || 'Etsy listings');
+}
+
+/**
+ * One workbook, one sheet per non-empty dataset — the format that actually
+ * suits this data, since reviews are a one-to-many child of listings.
+ * @param {{search?:Array, details?:Array, reviews?:Array}} data
+ */
+export function toWorkbook(data, options = {}) {
+  const sheets = [];
+  const add = (dataset, name) => {
+    const rows = data[dataset];
+    if (!rows || !rows.length) return;
+    const shaped = pickFields(rows, {
+      ...options,
+      fields: DATASET_FIELDS[dataset],
+      flatten: true,
+    });
+    sheets.push({ name, fields: shaped.fields, rows: shaped.rows });
+  };
+  add(DATASETS.search, 'Search rows');
+  add(DATASETS.details, 'Listing details');
+  add(DATASETS.reviews, 'Reviews');
+  if (!sheets.length) throw new Error('Nothing to export yet');
+  return rowsToWorkbook(sheets);
 }
 
 export function timestampedName(extension, prefix = 'etsy-search') {
@@ -102,10 +177,55 @@ export const FORMATS = {
   xlsx: { label: 'Excel', ext: 'xlsx', build: toXlsx },
 };
 
+const FILE_PREFIX = {
+  [DATASETS.search]: 'etsy-search',
+  [DATASETS.details]: 'etsy-listings',
+  [DATASETS.reviews]: 'etsy-reviews',
+  [DATASETS.all]: 'etsy-dataset',
+};
+
 export async function exportRows(rows, format, options = {}) {
   const spec = FORMATS[format];
   if (!spec) throw new Error(`Unknown export format: ${format}`);
   if (!rows.length) throw new Error('Nothing to export yet');
   const blob = spec.build(rows, options);
-  return downloadBlob(blob, timestampedName(spec.ext));
+  const prefix = FILE_PREFIX[options.dataset] || 'etsy-search';
+  return downloadBlob(blob, timestampedName(spec.ext, prefix));
+}
+
+/**
+ * Export one dataset, or everything at once.
+ * @param {string} dataset one of DATASETS
+ * @param {string} format json | jsonl | csv | xlsx
+ * @param {{search:Array, details:Array, reviews:Array}} data
+ */
+export async function exportDataset(dataset, format, data, options = {}) {
+  if (dataset !== DATASETS.all) {
+    const rows = data[dataset] || [];
+    return exportRows(rows, format, {
+      ...options,
+      dataset,
+      fields: DATASET_FIELDS[dataset],
+      sheetName: DATASET_LABELS[dataset],
+    });
+  }
+
+  // "All datasets" only makes sense in formats that can hold several tables.
+  if (format === 'xlsx') {
+    return downloadBlob(toWorkbook(data, options), timestampedName('xlsx', FILE_PREFIX[DATASETS.all]));
+  }
+  if (format === 'json') {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      search: pickFields(data.search || [], { ...options, fields: FIELDS }).rows,
+      details: pickFields(data.details || [], { ...options, fields: DETAIL_FIELDS }).rows,
+      reviews: pickFields(data.reviews || [], { ...options, fields: REVIEW_FIELDS }).rows,
+    };
+    if (!payload.search.length && !payload.details.length && !payload.reviews.length) {
+      throw new Error('Nothing to export yet');
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    return downloadBlob(blob, timestampedName('json', FILE_PREFIX[DATASETS.all]));
+  }
+  throw new Error('CSV and JSONL hold one table — pick a single dataset, or use Excel/JSON');
 }

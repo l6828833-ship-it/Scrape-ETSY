@@ -14,7 +14,7 @@ const ACCEPT_HTML =
  * @param {{signal?:AbortSignal, timeoutMs?:number, acceptLanguage?:string}} [opts]
  * @returns {Promise<{ok:boolean,status:number,html:string,finalUrl:string,error:?string}>}
  */
-export async function fetchSearchPage(url, opts = {}) {
+export async function fetchHtml(url, opts = {}) {
   const { signal, timeoutMs = 45000, acceptLanguage = 'en-US,en;q=0.9' } = opts;
 
   const controller = new AbortController();
@@ -65,3 +65,7 @@ export async function fetchSearchPage(url, opts = {}) {
     if (signal) signal.removeEventListener('abort', onAbort);
   }
 }
+
+/** Search pages and listing pages are the same GET; kept for readability. */
+export const fetchSearchPage = fetchHtml;
+export const fetchListingPage = fetchHtml;

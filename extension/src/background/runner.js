@@ -9,6 +9,8 @@ import { buildSearchUrl } from '../common/url-builder.js';
 import { fetchSearchPage } from './fetch-engine.js';
 import { scrapeInTab, scrapeExistingTab } from './tab-engine.js';
 import { parseHtmlOffscreen, offscreenAvailable, closeOffscreen } from './offscreen.js';
+import { buildListingUrl, fetchDetailViaFetch, fetchDetailViaTab } from './detail-engine.js';
+import * as history from './history.js';
 import * as store from './store.js';
 import * as proxy from './proxy.js';
 // Classic script: executing it defines globalThis.EtsyParse (JSON-LD-only
@@ -104,6 +106,22 @@ class Dedupe {
 }
 
 /**
+ * Row-level filters applied to every parsed page.
+ *
+ * Note we do NOT filter on `bestseller` when `bestsellerOnly` is set: Etsy's
+ * `is_best_seller=true` facet already restricts the result set server-side, and
+ * badge detection in the DOM is only best-effort — filtering locally as well
+ * would silently drop valid rows whose badge we failed to see.
+ *
+ * @returns {{rows:Array<object>, adsSkipped:number}}
+ */
+export function applyRowFilters(records, settings) {
+  if (!settings || !settings.excludeSponsored) return { rows: records, adsSkipped: 0 };
+  const rows = records.filter((r) => !r.sponsored);
+  return { rows, adsSkipped: records.length - rows.length };
+}
+
+/**
  * Kick off a scraping run. Resolves when the run finishes or is stopped.
  * @param {object} rawSettings see DEFAULTS in common/constants.js
  */
@@ -130,6 +148,7 @@ export async function startRun(rawSettings) {
       pagesFailed: 0,
       rows: 0,
       duplicates: 0,
+      adsSkipped: 0,
       retries: 0,
       blocks: 0,
     },
@@ -158,12 +177,17 @@ export async function startRun(rawSettings) {
     escalated: new Set(),
     active: new Map(),
     requestCount: 0,
+    /** listingId -> first search hit, in discovery order (phase-2 queue). */
+    collected: new Map(),
+    /** Listings whose detail fetch was blocked -> tab engine from now on. */
+    detailEscalated: false,
   };
 
   const workerCount = Math.min(settings.maxConcurrency, Math.max(1, settings.queries.length * settings.maxPagesPerQuery));
   const promise = (async () => {
     try {
       await Promise.all(Array.from({ length: workerCount }, (_, i) => worker(ctx, i)));
+      if (settings.scrapeDetails && !signal.aborted) await detailPhase(ctx);
     } finally {
       await finishRun(ctx);
     }
@@ -182,12 +206,16 @@ async function finishRun(ctx) {
     await store.log('info', 'Proxy settings restored to system default.');
   }
   await store.setActive([]);
+  const deep = p.detailsPlanned
+    ? ` ${p.detailsDone - p.detailsFailed}/${p.detailsPlanned} listing detail(s), ${p.reviews} review(s).`
+    : '';
   await store.patchState({
     status: aborted ? RUN_STATUS.IDLE : RUN_STATUS.DONE,
     finishedAt: Date.now(),
+    phase: 'idle',
     message: aborted
-      ? `Stopped. ${p.rows} rows from ${p.pagesDone} page(s).`
-      : `Finished. ${p.rows} rows from ${p.pagesDone} page(s), ${p.pagesFailed} failed.`,
+      ? `Stopped. ${p.rows} rows from ${p.pagesDone} page(s).${deep}`
+      : `Finished. ${p.rows} rows from ${p.pagesDone} page(s), ${p.pagesFailed} failed.${deep}`,
   });
   await store.log(aborted ? 'warn' : 'success',
     aborted ? 'Run stopped by user.' : `Run complete: ${p.rows} rows, ${p.duplicates} duplicates skipped.`);
@@ -245,6 +273,8 @@ async function processTask(ctx, task, label) {
     minPrice: settings.minPrice,
     maxPrice: settings.maxPrice,
     shipTo: settings.shipTo,
+    bestsellerOnly: settings.bestsellerOnly,
+    freeShippingOnly: settings.freeShippingOnly,
   });
 
   const context = {
@@ -325,21 +355,206 @@ async function processTask(ctx, task, label) {
       return;
     }
 
-    const { kept, duplicates } = ctx.dedupe.filter(records, task.query);
+    // Row-level filters run before de-duplication so the dupe count stays
+    // meaningful, and after the empty-page check above so that a page made up
+    // entirely of ads is not mistaken for the end of the results.
+    const { rows: filtered, adsSkipped } = applyRowFilters(records, settings);
+    const { kept, duplicates } = ctx.dedupe.filter(filtered, task.query);
+    for (const row of kept) {
+      if (row.listingId && !ctx.collected.has(row.listingId)) {
+        ctx.collected.set(row.listingId, { url: row.url, query: row.query, page: row.page, position: row.position });
+      }
+    }
     const stored = await store.addRows(kept);
-    await store.bumpProgress({ pagesDone: 1, rows: stored, duplicates });
+    await store.bumpProgress({ pagesDone: 1, rows: stored, duplicates, adsSkipped });
     if (task.page >= settings.maxPagesPerQuery
       && ctx.scheduler.markDone(task.queueIndex, 'page limit')) {
       await store.bumpProgress({ queriesDone: 1 });
     }
     await store.log('success',
-      `${label} -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''} via ${engine}`
+      `${label} -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''}`
+      + `${adsSkipped ? ` (${adsSkipped} ads skipped)` : ''} via ${engine}`
       + ` [ld:${outcome.counts.jsonld} dom:${outcome.counts.dom}]`);
     return;
   }
 
   await store.log('error', `${label} gave up after ${maxAttempts} attempt(s) — ${lastError}`);
   await store.bumpProgress({ pagesDone: 1, pagesFailed: 1 });
+}
+
+// ---------------------------------------------------------------- phase 2
+// Deep listing intelligence: re-open each listing discovered above, extract the
+// full dataset, snapshot it for velocity, and store reviews separately.
+
+async function detailPhase(ctx) {
+  const { settings } = ctx;
+  const targets = [...ctx.collected.entries()]
+    .slice(0, settings.maxDetailListings)
+    .map(([listingId, meta]) => ({ listingId, ...meta }));
+
+  if (!targets.length) {
+    await store.log('info', 'Deep scrape skipped: the search phase collected no listings.');
+    return;
+  }
+
+  await store.patchState({ phase: 'details' });
+  await store.bumpProgress({ detailsPlanned: targets.length });
+  const skipped = ctx.collected.size - targets.length;
+  await store.log('info',
+    `Deep scrape: ${targets.length} listing(s)${skipped > 0 ? ` (${skipped} over the cap were skipped)` : ''}`
+    + `, concurrency=${settings.detailConcurrency}`
+    + `${settings.scrapeReviews ? `, up to ${settings.maxReviewsPerListing} reviews each` : ', reviews off'}`);
+
+  if (!offscreenAvailable() && settings.engine === ENGINES.FETCH) {
+    await store.log('warn',
+      'No offscreen document available: detail records will carry JSON-LD fields only '
+      + '(no favourites, stock, variations or reviews). Use the tab engine for the full dataset.');
+  }
+
+  let cursor = 0;
+  const next = () => (cursor < targets.length ? targets[cursor++] : null);
+
+  const workers = Array.from(
+    { length: Math.min(settings.detailConcurrency, targets.length) },
+    (_, index) => (async () => {
+      let firstRequest = index === 0;
+      for (;;) {
+        if (ctx.signal.aborted) return;
+        const target = next();
+        if (!target) return;
+
+        if (!firstRequest) {
+          const wait = jitter(settings.minDelayMs, settings.maxDelayMs);
+          if (wait > 0) await sleep(wait);
+          if (ctx.signal.aborted) return;
+        }
+        firstRequest = false;
+
+        const label = `listing ${target.listingId}`;
+        ctx.active.set(label, true);
+        await store.setActive([...ctx.active.keys()]);
+        try {
+          await processDetailTask(ctx, target, label);
+        } catch (err) {
+          await store.log('error', `${label} crashed: ${(err && err.message) || err}`);
+          await store.bumpProgress({ detailsDone: 1, detailsFailed: 1 });
+        } finally {
+          ctx.active.delete(label);
+          await store.setActive([...ctx.active.keys()]);
+        }
+      }
+    })(),
+  );
+
+  await Promise.all(workers);
+  await history.persistNow();
+}
+
+async function processDetailTask(ctx, target, label) {
+  const { settings } = ctx;
+  const url = buildListingUrl(target.listingId, target.url);
+  if (!url) {
+    await store.bumpProgress({ detailsDone: 1, detailsFailed: 1 });
+    await store.log('warn', `${label} has no usable URL; skipped.`);
+    return;
+  }
+
+  const maxAttempts = settings.maxRequestRetries + 1;
+  let lastError = 'unknown error';
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (ctx.signal.aborted) return;
+    if (attempt > 0) {
+      const backoff = Math.min(30000, 700 * 2 ** (attempt - 1)) + jitter(0, 600);
+      await store.bumpProgress({ retries: 1 });
+      await store.log('warn', `${label} retry ${attempt}/${settings.maxRequestRetries} in ${Math.round(backoff / 1000)}s — ${lastError}`);
+      await sleep(backoff);
+      if (ctx.signal.aborted) return;
+    }
+
+    const context = {
+      listingId: target.listingId,
+      sourceUrl: url,
+      scrapeReviews: settings.scrapeReviews,
+      maxReviews: settings.maxReviewsPerListing,
+      scrapedAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
+    };
+
+    // Reviews and favourites only exist in the rendered DOM, so a fetch without
+    // an offscreen parser is upgraded to a tab automatically.
+    const useTab = settings.engine === ENGINES.TAB
+      || ctx.detailEscalated
+      || attempt > 0
+      || (settings.engine === ENGINES.HYBRID && !offscreenAvailable());
+
+    ctx.requestCount += 1;
+    if (settings.proxyConfiguration && settings.proxyConfiguration.enabled) {
+      const rotated = await proxy.noteRequestAndMaybeRotate(settings.proxyConfiguration.rotateEveryRequests);
+      if (rotated) await store.log('info', `Rotated proxy -> ${rotated}`);
+    }
+
+    const outcome = useTab
+      ? await fetchDetailViaTab(url, {
+        signal: ctx.signal,
+        context,
+        keepTabsOpen: settings.keepTabsOpen,
+      })
+      : await fetchDetailViaFetch(url, {
+        signal: ctx.signal,
+        context,
+        retryableStatus: RETRYABLE_STATUS,
+      });
+
+    if (outcome.aborted || ctx.signal.aborted) return;
+
+    if (outcome.blocked) {
+      await store.bumpProgress({ blocks: 1 });
+      if (settings.engine === ENGINES.HYBRID && !ctx.detailEscalated) {
+        ctx.detailEscalated = true;
+        await store.log('warn', `${label} blocked — escalating the deep scrape to the tab engine.`);
+      }
+      lastError = outcome.error || 'blocked';
+      continue;
+    }
+
+    if (!outcome.ok || !outcome.record) {
+      lastError = outcome.error || 'no listing data';
+      if (!outcome.retryable) break;
+      continue;
+    }
+
+    // Snapshot first, then attach the derived velocity metrics.
+    const enriched = settings.trackHistory
+      ? await history.recordAndSummarize(outcome.record)
+      : await history.recordAndSummarize(outcome.record, { track: false });
+
+    await store.upsertDetail(enriched);
+
+    let reviewCount = 0;
+    if (settings.scrapeReviews && outcome.reviews && outcome.reviews.length) {
+      await store.dropReviewsFor(enriched.listingId);
+      reviewCount = await store.addReviews(outcome.reviews.slice(0, settings.maxReviewsPerListing));
+    }
+
+    await store.bumpProgress({ detailsDone: 1, reviews: reviewCount });
+    await store.log('success',
+      `${label} -> ${describeDetail(enriched)}${reviewCount ? `, ${reviewCount} review(s)` : ''}`);
+    return;
+  }
+
+  await store.bumpProgress({ detailsDone: 1, detailsFailed: 1 });
+  await store.log('error', `${label} gave up — ${lastError}`);
+}
+
+/** Compact log summary: the signals worth eyeballing while a run happens. */
+function describeDetail(d) {
+  const bits = [];
+  if (d.favoritesCount !== null && d.favoritesCount !== undefined) bits.push(`${d.favoritesCount} favs`);
+  if (d.favoritesPerDay !== null && d.favoritesPerDay !== undefined) bits.push(`${d.favoritesPerDay}/day`);
+  if (d.cartCount) bits.push(`${d.cartCount} in cart`);
+  if (d.quantityAvailable !== null && d.quantityAvailable !== undefined) bits.push(`qty ${d.quantityAvailable}`);
+  if (d.opportunityScore !== null && d.opportunityScore !== undefined) bits.push(`opp ${d.opportunityScore}`);
+  return bits.length ? bits.join(', ') : 'detail captured';
 }
 
 async function runFetchAttempt(ctx, url, context) {
@@ -446,12 +661,14 @@ export async function scrapeActiveTab() {
   for (const row of existing) {
     if (row.listingId) dedupe.global.add(row.listingId);
   }
-  const { kept, duplicates } = dedupe.filter(res.result.records, query);
+  const { rows: filtered, adsSkipped } = applyRowFilters(res.result.records, settings);
+  const { kept, duplicates } = dedupe.filter(filtered, query);
   const stored = await store.addRows(kept);
-  await store.bumpProgress({ rows: stored, duplicates, pagesDone: 1 });
-  await store.log('success', `Current tab -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''}`);
+  await store.bumpProgress({ rows: stored, duplicates, adsSkipped, pagesDone: 1 });
+  await store.log('success', `Current tab -> ${stored} rows${duplicates ? ` (${duplicates} dupes)` : ''}`
+    + `${adsSkipped ? ` (${adsSkipped} ads skipped)` : ''}`);
   await store.persistNow();
   return { rows: stored, duplicates, total: (await store.getRows()).length };
 }
 
-export const __testing = { Scheduler, Dedupe, LIMITS };
+export const __testing = { Scheduler, Dedupe, applyRowFilters, LIMITS };

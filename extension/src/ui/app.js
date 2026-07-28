@@ -3,8 +3,8 @@
  * `?view=tab` query switches to the wide layout).
  */
 
-import { MSG, RUN_STATUS, DEFAULTS } from '../common/constants.js';
-import { exportRows, pickFields } from './export.js';
+import { MSG, RUN_STATUS, DEFAULTS, DATASETS } from '../common/constants.js';
+import { exportDataset, pickFields, DATASET_FIELDS } from './export.js';
 
 const PREVIEW_LIMIT = 200;
 
@@ -24,13 +24,59 @@ const FIELD_BINDINGS = [
   ['engine', 'engine', 'text'],
   ['dedupe', 'dedupe', 'text'],
   ['positionMode', 'positionMode', 'text'],
+  ['bestsellerOnly', 'bestsellerOnly', 'bool'],
+  ['excludeSponsored', 'excludeSponsored', 'bool'],
+  ['freeShippingOnly', 'freeShippingOnly', 'bool'],
+  ['scrapeDetails', 'scrapeDetails', 'bool'],
+  ['maxDetailListings', 'maxDetailListings', 'int'],
+  ['detailConcurrency', 'detailConcurrency', 'int'],
+  ['maxReviewsPerListing', 'maxReviewsPerListing', 'int'],
+  ['scrapeReviews', 'scrapeReviews', 'bool'],
+  ['trackHistory', 'trackHistory', 'bool'],
   ['stopOnEmptyPage', 'stopOnEmptyPage', 'bool'],
   ['manualCaptchaSolve', 'manualCaptchaSolve', 'bool'],
   ['keepTabsOpen', 'keepTabsOpen', 'bool'],
 ];
 
-let cachedRows = [];
-let rowTotal = 0;
+/** Preview table shape per dataset: [header, className, accessor]. */
+const PREVIEW_COLUMNS = {
+  [DATASETS.search]: [
+    ['#', 'num', (r) => r.position],
+    ['Query', '', (r) => r.query],
+    ['P', 'num', (r) => r.page],
+    ['Title', 'link', (r) => r],
+    ['Price', 'num', (r) => formatPrice(r)],
+    ['Shop', '', (r) => r.shopName],
+    ['Rating', 'num', (r) => r.rating],
+    ['Reviews', 'num', (r) => fmtOrDash(r.reviewCount)],
+    ['Flags', 'flags', (r) => r],
+  ],
+  [DATASETS.details]: [
+    ['Listing', 'link', (r) => r],
+    ['Price', 'num', (r) => formatPrice(r)],
+    ['Favs', 'num', (r) => fmtOrDash(r.favoritesCount)],
+    ['Favs/day', 'num', (r) => fmtOrDash(r.favoritesPerDay)],
+    ['Δ favs', 'num', (r) => fmtDelta(r.favoritesDelta)],
+    ['Cart', 'num', (r) => fmtOrDash(r.cartCount)],
+    ['Qty', 'num', (r) => fmtOrDash(r.quantityAvailable)],
+    ['Reviews', 'num', (r) => fmtOrDash(r.reviewCount)],
+    ['Shop sales', 'num', (r) => fmtOrDash(r.shopTotalSales)],
+    ['Gap', 'num', (r) => fmtOrDash(r.competitiveGapScore)],
+    ['Opp', 'num', (r) => fmtOrDash(r.opportunityScore)],
+    ['Tracked', 'num', (r) => (r.snapshotCount ? `${r.snapshotCount}x` : '—')],
+  ],
+  [DATASETS.reviews]: [
+    ['Listing', 'num', (r) => r.listingId],
+    ['Rating', 'num', (r) => fmtOrDash(r.rating)],
+    ['Date', '', (r) => r.date],
+    ['Reviewer', '', (r) => r.reviewer],
+    ['Comment', '', (r) => r.comment],
+    ['Photos', 'num', (r) => fmtOrDash(r.photoCount)],
+  ],
+};
+
+let rowTotal = -1;
+let currentDataset = DATASETS.search;
 
 // --------------------------------------------------------------- messaging
 
@@ -57,10 +103,9 @@ function readForm() {
         settings[key] = Number.isFinite(n) ? n : DEFAULTS[key];
         break;
       }
-      case 'numOrNull': {
+      case 'numOrNull':
         settings[key] = node.value === '' ? null : Number(node.value);
         break;
-      }
       case 'bool':
         settings[key] = node.checked;
         break;
@@ -89,14 +134,20 @@ function writeForm(settings) {
   el('proxyEnabled').checked = Boolean(proxy.enabled);
   el('proxyList').value = (proxy.proxies || []).join('\n');
   el('proxyRotate').value = proxy.rotateEveryRequests;
+  if (settings.scrapeDetails) el('deep').open = true;
   updateQueriesHint();
 }
 
 function updateQueriesHint() {
   const count = el('queries').value.split('\n').filter((s) => s.trim()).length;
   const pages = Number.parseInt(el('maxPagesPerQuery').value, 10) || 0;
+  const searchRequests = count * pages;
+  const detailRequests = el('scrapeDetails').checked
+    ? Math.min(Number.parseInt(el('maxDetailListings').value, 10) || 0, 500)
+    : 0;
   el('queriesHint').textContent = count
-    ? `${count} quer${count === 1 ? 'y' : 'ies'} -> up to ${count * pages} page request(s)`
+    ? `${count} quer${count === 1 ? 'y' : 'ies'} -> up to ${searchRequests} search page(s)`
+      + `${detailRequests ? ` + up to ${detailRequests} listing page(s)` : ''}`
     : '0 queries';
 }
 
@@ -110,24 +161,28 @@ async function persistForm() {
 
 // -------------------------------------------------------------- rendering
 
-function renderState(state, rowCount, running) {
+function renderState(state, counts, running) {
   const status = state.status || RUN_STATUS.IDLE;
   const pill = el('statusPill');
-  pill.textContent = status;
+  pill.textContent = state.phase === 'details' && running ? 'deep scrape' : status;
   pill.className = `pill pill-${status}`;
 
   const p = state.progress || {};
-  const planned = p.pagesPlanned || 0;
-  const done = p.pagesDone || 0;
+  const planned = (p.pagesPlanned || 0) + (p.detailsPlanned || 0);
+  const done = (p.pagesDone || 0) + (p.detailsDone || 0);
   const pct = planned ? Math.min(100, Math.round((done / planned) * 100)) : (running ? 5 : 0);
   el('progressBar').style.width = `${pct}%`;
 
   el('statRows').textContent = fmt(p.rows || 0);
-  el('statPages').textContent = `${fmt(done)} / ${fmt(planned)}`;
+  el('statPages').textContent = `${fmt(p.pagesDone || 0)} / ${fmt(p.pagesPlanned || 0)}`;
   el('statQueries').textContent = `${fmt(p.queriesDone || 0)} / ${fmt(p.queriesTotal || 0)}`;
   el('statDupes').textContent = fmt(p.duplicates || 0);
+  el('statAds').textContent = fmt(p.adsSkipped || 0);
   el('statRetries').textContent = fmt(p.retries || 0);
   el('statBlocks').textContent = fmt(p.blocks || 0);
+  el('statDetails').textContent = `${fmt(p.detailsDone || 0)} / ${fmt(p.detailsPlanned || 0)}`;
+  el('statReviews').textContent = fmt((counts && counts.reviewCount) || p.reviews || 0);
+  el('statTracked').textContent = fmt((counts && counts.history && counts.history.listings) || 0);
   el('statusMessage').textContent = state.message || (running ? 'Working…' : 'Ready.');
 
   const active = state.active || [];
@@ -140,7 +195,15 @@ function renderState(state, rowCount, running) {
   el('scrapeTab').disabled = running;
 
   renderLog(state.log || []);
-  el('rowCount').textContent = `${fmt(rowCount)} rows`;
+  renderCountPill(counts);
+}
+
+function renderCountPill(counts) {
+  if (!counts) return;
+  const parts = [`${fmt(counts.rowCount || 0)} rows`];
+  if (counts.detailCount) parts.push(`${fmt(counts.detailCount)} details`);
+  if (counts.reviewCount) parts.push(`${fmt(counts.reviewCount)} reviews`);
+  el('rowCount').textContent = parts.join(' · ');
 }
 
 function renderLog(entries) {
@@ -165,27 +228,35 @@ function renderLog(entries) {
   if (nearBottom) list.scrollTop = list.scrollHeight;
 }
 
-function renderPreview(rows, total) {
+function renderPreview(rows, total, dataset) {
+  const columns = PREVIEW_COLUMNS[dataset] || PREVIEW_COLUMNS[DATASETS.search];
+
+  const headRow = document.createElement('tr');
+  for (const [header] of columns) {
+    const th = document.createElement('th');
+    th.textContent = header;
+    headRow.append(th);
+  }
+  el('previewHead').replaceChildren(headRow);
+
   const body = el('previewBody');
   if (!rows.length) {
-    body.innerHTML = '<tr class="empty"><td colspan="9">No rows yet.</td></tr>';
-    el('previewHint').textContent = '';
+    body.innerHTML = `<tr class="empty"><td colspan="${columns.length}">No rows yet.</td></tr>`;
+    el('previewHint').textContent = dataset === DATASETS.details
+      ? 'Enable "Deep listing intelligence" before starting a run to populate this.'
+      : '';
     return;
   }
+
   const frag = document.createDocumentFragment();
   for (const row of rows) {
     const tr = document.createElement('tr');
-    tr.append(
-      td(row.position, 'num'),
-      td(row.query),
-      td(row.page, 'num'),
-      titleCell(row),
-      td(formatPrice(row), 'num'),
-      td(row.shopName || '—'),
-      td(row.rating == null ? '—' : row.rating, 'num'),
-      td(row.reviewCount == null ? '—' : fmt(row.reviewCount), 'num'),
-      flagsCell(row),
-    );
+    for (const [, className, accessor] of columns) {
+      const value = accessor(row);
+      if (className === 'link') tr.append(titleCell(value));
+      else if (className === 'flags') tr.append(flagsCell(value));
+      else tr.append(td(value, className));
+    }
     frag.append(tr);
   }
   body.replaceChildren(frag);
@@ -197,7 +268,9 @@ function renderPreview(rows, total) {
 function td(value, className) {
   const cell = document.createElement('td');
   if (className) cell.className = className;
-  cell.textContent = value === null || value === undefined || value === '' ? '—' : String(value);
+  const empty = value === null || value === undefined || value === '';
+  cell.textContent = empty ? '—' : String(value);
+  if (!empty && String(value).length > 40) cell.title = String(value);
   return cell;
 }
 
@@ -223,6 +296,7 @@ function flagsCell(row) {
     row.sponsored && ['ad', 'Ad'],
     row.freeShipping && ['free', 'Free ship'],
     row.bestseller && ['best', 'Best'],
+    row.starSeller && ['best', 'Star'],
   ].filter(Boolean);
   if (!flags.length) {
     cell.textContent = '—';
@@ -239,11 +313,20 @@ function flagsCell(row) {
 
 function formatPrice(row) {
   if (row.price === null || row.price === undefined) return '—';
-  return `${row.price.toFixed(2)} ${row.currency || ''}`.trim();
+  return `${Number(row.price).toFixed(2)} ${row.currency || ''}`.trim();
 }
 
 function fmt(n) {
   return Number(n || 0).toLocaleString();
+}
+
+function fmtOrDash(v) {
+  return v === null || v === undefined || v === '' ? '—' : fmt(v);
+}
+
+function fmtDelta(v) {
+  if (v === null || v === undefined) return '—';
+  return v > 0 ? `+${fmt(v)}` : fmt(v);
 }
 
 let toastTimer = null;
@@ -253,26 +336,47 @@ function toast(message, isError = false) {
   node.className = `toast${isError ? ' error' : ''}`;
   node.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { node.hidden = true; }, 4000);
+  toastTimer = setTimeout(() => { node.hidden = true; }, 5000);
 }
 
 // ------------------------------------------------------------------ actions
 
-async function refresh({ withRows = true } = {}) {
-  const { state, rowCount, running } = await send(MSG.GET_STATE);
-  renderState(state, rowCount, running);
-  if (withRows) {
-    const { rows, total } = await send(MSG.GET_RESULTS, { limit: PREVIEW_LIMIT });
-    rowTotal = total;
-    renderPreview(rows, total);
-  }
+const MSG_FOR_DATASET = {
+  [DATASETS.search]: MSG.GET_RESULTS,
+  [DATASETS.details]: MSG.GET_DETAILS,
+  [DATASETS.reviews]: MSG.GET_REVIEWS,
+};
+
+async function fetchDataset(dataset, limit) {
+  const type = MSG_FOR_DATASET[dataset];
+  if (!type) return { rows: [], total: 0 };
+  return send(type, limit ? { limit } : {});
 }
 
-async function loadAllRows() {
-  const { rows, total } = await send(MSG.GET_RESULTS, {});
-  cachedRows = rows;
+async function refresh({ withRows = true } = {}) {
+  const state = await send(MSG.GET_STATE);
+  renderState(state.state, state, state.running);
+  if (withRows) await refreshPreview();
+}
+
+async function refreshPreview() {
+  const dataset = currentDataset === DATASETS.all ? DATASETS.search : currentDataset;
+  const { rows, total } = await fetchDataset(dataset, PREVIEW_LIMIT);
   rowTotal = total;
-  return rows;
+  renderPreview(rows, total, dataset);
+}
+
+async function collectAll() {
+  const [search, details, reviews] = await Promise.all([
+    fetchDataset(DATASETS.search),
+    fetchDataset(DATASETS.details),
+    fetchDataset(DATASETS.reviews),
+  ]);
+  return {
+    [DATASETS.search]: search.rows,
+    [DATASETS.details]: details.rows,
+    [DATASETS.reviews]: reviews.rows,
+  };
 }
 
 async function onStart() {
@@ -295,7 +399,7 @@ async function onStart() {
   try {
     el('start').disabled = true;
     await send(MSG.START_RUN, { settings });
-    toast('Run started');
+    toast(settings.scrapeDetails ? 'Run started (search, then deep scrape)' : 'Run started');
     await refresh();
   } catch (err) {
     el('start').disabled = false;
@@ -327,12 +431,10 @@ async function onScrapeTab() {
 
 async function onExport(format) {
   try {
-    const rows = await loadAllRows();
-    if (!rows.length) {
-      toast('Nothing to export yet', true);
-      return;
-    }
-    const name = await exportRows(rows, format, { includeDebug: el('includeDebug').checked });
+    const data = await collectAll();
+    const name = await exportDataset(currentDataset, format, data, {
+      includeDebug: el('includeDebug').checked,
+    });
     toast(`Saved ${name}`);
   } catch (err) {
     toast(String(err.message || err), true);
@@ -341,12 +443,16 @@ async function onExport(format) {
 
 async function onCopyJson() {
   try {
-    const rows = await loadAllRows();
+    const dataset = currentDataset === DATASETS.all ? DATASETS.search : currentDataset;
+    const { rows } = await fetchDataset(dataset);
     if (!rows.length) {
       toast('Nothing to copy yet', true);
       return;
     }
-    const { rows: shaped } = pickFields(rows, { includeDebug: el('includeDebug').checked });
+    const { rows: shaped } = pickFields(rows, {
+      fields: DATASET_FIELDS[dataset],
+      includeDebug: el('includeDebug').checked,
+    });
     await navigator.clipboard.writeText(JSON.stringify(shaped, null, 2));
     toast(`Copied ${rows.length} row(s) as JSON`);
   } catch (err) {
@@ -357,8 +463,7 @@ async function onCopyJson() {
 async function onClear() {
   try {
     await send(MSG.CLEAR_RESULTS);
-    cachedRows = [];
-    toast('Results cleared');
+    toast('Results cleared (snapshot history kept for velocity)');
     await refresh();
   } catch (err) {
     toast(String(err.message || err), true);
@@ -388,8 +493,16 @@ function wire() {
     btn.addEventListener('click', () => onExport(btn.dataset.export));
   }
 
-  el('queries').addEventListener('input', updateQueriesHint);
-  el('maxPagesPerQuery').addEventListener('input', updateQueriesHint);
+  el('dataset').addEventListener('change', async () => {
+    currentDataset = el('dataset').value;
+    rowTotal = -1;
+    await refreshPreview();
+  });
+
+  for (const id of ['queries', 'maxPagesPerQuery', 'maxDetailListings', 'scrapeDetails']) {
+    el(id).addEventListener('input', updateQueriesHint);
+    el(id).addEventListener('change', updateQueriesHint);
+  }
 
   // Persist settings as the user edits, so the popup reopens where it left off.
   for (const [id] of FIELD_BINDINGS) {
@@ -402,23 +515,24 @@ function wire() {
 
   chrome.runtime.onMessage.addListener((message) => {
     if (!message || message.type !== MSG.STATE_CHANGED) return;
-    renderState(message.state, message.rowCount, message.state.status === RUN_STATUS.RUNNING
-      || message.state.status === RUN_STATUS.STOPPING);
-    // Keep the preview roughly in sync without hammering the worker.
-    schedulePreviewRefresh(message.rowCount);
+    const running = message.state.status === RUN_STATUS.RUNNING
+      || message.state.status === RUN_STATUS.STOPPING;
+    renderState(message.state, message, running);
+    schedulePreviewRefresh(message);
   });
 }
 
 let previewTimer = null;
-function schedulePreviewRefresh(rowCount) {
-  if (rowCount === rowTotal) return;
+function schedulePreviewRefresh(message) {
+  const relevant = currentDataset === DATASETS.details ? message.detailCount
+    : currentDataset === DATASETS.reviews ? message.reviewCount
+      : message.rowCount;
+  if (relevant === rowTotal) return;
   if (previewTimer) return;
   previewTimer = setTimeout(async () => {
     previewTimer = null;
     try {
-      const { rows, total } = await send(MSG.GET_RESULTS, { limit: PREVIEW_LIMIT });
-      rowTotal = total;
-      renderPreview(rows, total);
+      await refreshPreview();
     } catch (_) { /* worker busy */ }
   }, 1200);
 }

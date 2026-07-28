@@ -12,6 +12,9 @@ const memory = {
   settings: null,
   state: null,
   rows: [],
+  /** Listing-detail records, one per listingId (latest wins). */
+  details: [],
+  reviews: [],
 };
 
 function freshState() {
@@ -29,9 +32,15 @@ function freshState() {
       pagesFailed: 0,
       rows: 0,
       duplicates: 0,
+      adsSkipped: 0,
       retries: 0,
       blocks: 0,
+      detailsPlanned: 0,
+      detailsDone: 0,
+      detailsFailed: 0,
+      reviews: 0,
     },
+    phase: 'search',
     active: [],
     log: [],
   };
@@ -43,10 +52,14 @@ async function hydrate() {
     STORAGE_KEYS.settings,
     STORAGE_KEYS.state,
     STORAGE_KEYS.results,
+    STORAGE_KEYS.details,
+    STORAGE_KEYS.reviews,
   ]);
   memory.settings = normalizeSettings(raw[STORAGE_KEYS.settings]);
   memory.state = raw[STORAGE_KEYS.state] || freshState();
   memory.rows = Array.isArray(raw[STORAGE_KEYS.results]) ? raw[STORAGE_KEYS.results] : [];
+  memory.details = Array.isArray(raw[STORAGE_KEYS.details]) ? raw[STORAGE_KEYS.details] : [];
+  memory.reviews = Array.isArray(raw[STORAGE_KEYS.reviews]) ? raw[STORAGE_KEYS.reviews] : [];
   // A run can never survive a worker restart mid-flight; mark it finished.
   if (memory.state.status === RUN_STATUS.RUNNING || memory.state.status === RUN_STATUS.STOPPING) {
     memory.state.status = RUN_STATUS.IDLE;
@@ -70,6 +83,14 @@ export function normalizeSettings(input) {
   s.maxDelayMs = clampInt(s.maxDelayMs, s.minDelayMs, 300000, Math.max(s.minDelayMs, DEFAULTS.maxDelayMs));
   s.resultsPerPage = clampInt(s.resultsPerPage, 1, 200, DEFAULTS.resultsPerPage);
   s.positionMode = s.positionMode === 'global' ? 'global' : 'per_page';
+  for (const flag of ['bestsellerOnly', 'freeShippingOnly', 'excludeSponsored',
+    'stopOnEmptyPage', 'manualCaptchaSolve', 'keepTabsOpen', 'scrapeDetails',
+    'scrapeReviews', 'trackHistory']) {
+    s[flag] = Boolean(s[flag]);
+  }
+  s.maxDetailListings = clampInt(s.maxDetailListings, 1, LIMITS.maxDetailListings, DEFAULTS.maxDetailListings);
+  s.detailConcurrency = clampInt(s.detailConcurrency, 1, LIMITS.maxDetailConcurrency, DEFAULTS.detailConcurrency);
+  s.maxReviewsPerListing = clampInt(s.maxReviewsPerListing, 0, LIMITS.maxReviewsPerListing, DEFAULTS.maxReviewsPerListing);
   s.dedupe = ['off', 'per_query', 'global'].includes(s.dedupe) ? s.dedupe : DEFAULTS.dedupe;
   s.engine = ['fetch', 'tab', 'hybrid'].includes(s.engine) ? s.engine : DEFAULTS.engine;
   s.minPrice = toNumOrNull(s.minPrice);
@@ -183,10 +204,64 @@ export async function getRows() {
   return memory.rows;
 }
 
+/** Upsert by listingId: a re-scrape replaces the previous detail record. */
+export async function upsertDetail(detail) {
+  await hydrate();
+  if (!detail || !detail.listingId) return false;
+  const index = memory.details.findIndex((d) => d.listingId === detail.listingId);
+  if (index >= 0) {
+    memory.details[index] = detail;
+  } else {
+    if (memory.details.length >= LIMITS.maxStoredDetails) {
+      await log('warn', `Detail cap reached (${LIMITS.maxStoredDetails}); export and clear.`);
+      return false;
+    }
+    memory.details.push(detail);
+  }
+  schedulePersist();
+  return true;
+}
+
+export async function addReviews(reviews) {
+  await hydrate();
+  if (!reviews || !reviews.length) return 0;
+  const room = LIMITS.maxStoredReviews - memory.reviews.length;
+  if (room <= 0) return 0;
+  const accepted = reviews.slice(0, room);
+  memory.reviews.push(...accepted);
+  schedulePersist();
+  return accepted.length;
+}
+
+/** Drop previously stored reviews for a listing before re-adding fresh ones. */
+export async function dropReviewsFor(listingId) {
+  await hydrate();
+  if (!listingId) return 0;
+  const before = memory.reviews.length;
+  memory.reviews = memory.reviews.filter((r) => r.listingId !== listingId);
+  return before - memory.reviews.length;
+}
+
+export async function getDetails() {
+  await hydrate();
+  return memory.details;
+}
+
+export async function getReviews() {
+  await hydrate();
+  return memory.reviews;
+}
+
 export async function clearRows() {
   await hydrate();
   memory.rows = [];
-  await chrome.storage.local.set({ [STORAGE_KEYS.results]: [] });
+  memory.details = [];
+  memory.reviews = [];
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.results]: [],
+    [STORAGE_KEYS.details]: [],
+    [STORAGE_KEYS.reviews]: [],
+  });
   broadcast();
 }
 
@@ -210,6 +285,8 @@ export async function persistNow() {
     await chrome.storage.local.set({
       [STORAGE_KEYS.state]: memory.state,
       [STORAGE_KEYS.results]: memory.rows,
+      [STORAGE_KEYS.details]: memory.details,
+      [STORAGE_KEYS.reviews]: memory.reviews,
     });
   } catch (err) {
     // Quota problems should never abort a run — surface and keep going.
@@ -228,6 +305,8 @@ function broadcast() {
       type: MSG.STATE_CHANGED,
       state: memory.state,
       rowCount: memory.rows.length,
+      detailCount: memory.details.length,
+      reviewCount: memory.reviews.length,
     };
     chrome.runtime.sendMessage(payload).catch(() => {
       /* no UI listening — expected */

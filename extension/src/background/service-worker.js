@@ -7,6 +7,7 @@
 import { MSG, RUN_STATUS } from '../common/constants.js';
 import * as store from './store.js';
 import * as runner from './runner.js';
+import * as history from './history.js';
 
 const KEEPALIVE_ALARM = 'etsy-scraper-keepalive';
 let keepAliveTimer = null;
@@ -62,8 +63,29 @@ async function handleMessage(message) {
       return store.saveSettings(message.settings);
 
     case MSG.GET_STATE: {
-      const [state, rows] = await Promise.all([store.getState(), store.getRows()]);
-      return { state, rowCount: rows.length, running: runner.isRunning() };
+      const [state, rows, details, reviews, historyStats] = await Promise.all([
+        store.getState(), store.getRows(), store.getDetails(), store.getReviews(), history.stats(),
+      ]);
+      return {
+        state,
+        rowCount: rows.length,
+        detailCount: details.length,
+        reviewCount: reviews.length,
+        history: historyStats,
+        running: runner.isRunning(),
+      };
+    }
+
+    case MSG.GET_DETAILS: {
+      const details = await store.getDetails();
+      const limit = Number(message.limit) || 0;
+      return { total: details.length, rows: limit > 0 ? details.slice(0, limit) : details };
+    }
+
+    case MSG.GET_REVIEWS: {
+      const reviews = await store.getReviews();
+      const limit = Number(message.limit) || 0;
+      return { total: reviews.length, rows: limit > 0 ? reviews.slice(0, limit) : reviews };
     }
 
     case MSG.GET_RESULTS: {

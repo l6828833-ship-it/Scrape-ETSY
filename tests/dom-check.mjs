@@ -171,8 +171,11 @@ async function closePage(targetId) {
 // --------------------------------------------------------------------- setup
 
 const parseSource = readFileSync(path.join(root, 'extension/src/common/parse.js'), 'utf8');
+const detailParseSource = readFileSync(path.join(root, 'extension/src/common/detail-parse.js'), 'utf8');
 const extractSource = readFileSync(path.join(root, 'extension/src/content/extract.js'), 'utf8');
+const extractDetailSource = readFileSync(path.join(root, 'extension/src/content/extract-detail.js'), 'utf8');
 const searchFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-search-page.html')).href;
+const listingFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-listing-page.html')).href;
 const challengeFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-challenge-page.html')).href;
 
 let exitCode = 0;
@@ -284,6 +287,125 @@ try {
       await session.evaluate(extractSource);
       const ok = await session.evaluate('typeof globalThis.__etsyExtract === "function"');
       assert.equal(ok, true);
+    });
+
+    session.close();
+    await closePage(targetId);
+  }
+
+  // -------------------------------------------------- listing (deep) parser
+  {
+    const { session, targetId } = await openPage(listingFixture);
+    await session.evaluate(parseSource);
+    await session.evaluate(detailParseSource);
+
+    const raw = await session.evaluate(`JSON.stringify(EtsyDetail.parseListingPage({
+      html: document.documentElement.outerHTML,
+      doc: document,
+      context: { listingId: '1544102938', scrapeReviews: true, maxReviews: 20,
+                 scrapedAt: '2026-05-13T04:35:22Z' }
+    }))`);
+    const parsed = JSON.parse(raw);
+    const d = parsed.record;
+
+    await test('extracts the listing core', () => {
+      assert.ok(d, 'no record returned');
+      assert.equal(d.listingId, '1544102938');
+      assert.equal(d.title, '2026 Calendar Printable, Minimalist Wall Calendar Digital Download');
+      assert.match(d.description, /Instant download 2026 wall calendar/);
+      assert.equal(d.price, 9.6);
+      assert.equal(d.currency, 'USD');
+      assert.equal(d.originalPrice, 12);
+      assert.equal(d.onSale, true);
+      assert.equal(d.availability, 'InStock');
+      assert.equal(d.categoryPath, 'Home & Living > Office > Calendars & Planners');
+      assert.equal(d.listingCreationDate, '2026-01-12');
+      assert.equal(d.imageCount, 3, 'DOM carousel wins over the 2 JSON-LD images');
+      assert.equal(d.detailSource, 'jsonld+dom');
+    });
+
+    await test('extracts sales-velocity signals', () => {
+      assert.equal(d.favoritesCount, 1482);
+      assert.equal(d.cartCount, 20);
+      assert.equal(d.quantityAvailable, 4);
+      assert.equal(d.viewsCount, null, 'Etsy does not publish view counts — must stay null');
+    });
+
+    await test('extracts monetisation structure', () => {
+      assert.equal(d.variations.length, 2);
+      assert.deepEqual(d.variations[0], { name: 'Size', options: ['A4', 'A3', 'US Letter'] });
+      assert.deepEqual(d.variations[1].options, ['Black & White', 'Sage']);
+      assert.equal(d.variationCount, 6, '3 sizes x 2 colours');
+      assert.equal(d.isPersonalizable, true);
+      assert.equal(d.personalizationRequired, true);
+      assert.deepEqual(d.materials, ['Recycled paper', 'Archival ink']);
+    });
+
+    await test('extracts the SEO surface', () => {
+      assert.ok(d.tags.includes('2026 calendar'));
+      assert.ok(d.tags.includes('printable calendar'));
+      assert.equal(d.tagCount, 4, 'duplicate market links collapse');
+      assert.ok(d.tagCount <= 13);
+    });
+
+    await test('extracts seller authority', () => {
+      assert.equal(d.shopName, 'PaperMoonStudioCo');
+      assert.equal(d.shopUrl, 'https://www.etsy.com/shop/PaperMoonStudioCo');
+      assert.equal(d.shopTotalSales, 12345);
+      assert.equal(d.starSeller, true);
+      assert.equal(d.shopLocation, 'Portland, Oregon');
+      assert.equal(d.rating, 4.9);
+      assert.equal(d.reviewCount, 128);
+    });
+
+    await test('captures reviews with ratings, dates and photos', () => {
+      assert.equal(parsed.counts.reviews, 3);
+      assert.equal(d.reviewsCaptured, 3);
+      const [one, two, three] = parsed.reviews;
+      assert.equal(one.rating, 5);
+      assert.equal(one.date, '2026-03-03');
+      assert.equal(one.reviewer, 'quietmornings');
+      assert.match(one.comment, /matching\s+weekly planner page/);
+      assert.equal(one.photoCount, 1);
+      assert.match(one.photos[0], /^https:\/\/i\.etsystatic\.com\//);
+      assert.equal(two.photoCount, 0, 'no photo on the second review');
+      assert.equal(three.rating, 4, 'the outlier keeps its lower rating');
+      assert.equal(three.photoCount, 2);
+      assert.equal(one.listingId, '1544102938');
+      assert.equal(one.scrapedAt, '2026-05-13T04:35:22Z');
+    });
+
+    await test('respects the review cap', async () => {
+      const capped = JSON.parse(await session.evaluate(`JSON.stringify(EtsyDetail.parseListingPage({
+        html: document.documentElement.outerHTML, doc: document,
+        context: { listingId: '1', scrapeReviews: true, maxReviews: 2 }
+      }))`));
+      assert.equal(capped.reviews.length, 2);
+    });
+
+    await test('reviews can be switched off entirely', async () => {
+      const none = JSON.parse(await session.evaluate(`JSON.stringify(EtsyDetail.parseListingPage({
+        html: document.documentElement.outerHTML, doc: document,
+        context: { listingId: '1', scrapeReviews: false }
+      }))`));
+      assert.deepEqual(none.reviews, []);
+      assert.equal(none.record.reviewsCaptured, 0);
+      assert.equal(none.record.favoritesCount, 1482, 'the rest of the record is unaffected');
+    });
+
+    await test('injected extract-detail.js scrolls, expands and returns the record', async () => {
+      await session.evaluate(extractDetailSource);
+      const viaContent = JSON.parse(await session.evaluate(`(async () => JSON.stringify(
+        await globalThis.__etsyExtractDetail({
+          context: { listingId: '1544102938', scrapeReviews: true, maxReviews: 20 },
+          scrollPasses: 2, scrollPauseMs: 20, waitForReviewsMs: 500
+        })
+      ))()`));
+      assert.equal(viaContent.record.listingId, '1544102938');
+      assert.equal(viaContent.record.favoritesCount, 1482);
+      assert.equal(viaContent.reviews.length, 3);
+      assert.equal(viaContent.blocked, false);
+      assert.ok(viaContent.locationHref.endsWith('etsy-listing-page.html'));
     });
 
     session.close();
