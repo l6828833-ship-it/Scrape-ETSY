@@ -613,16 +613,11 @@
       if (n !== null) return n;
     }
 
-    if (!hasRating) {
-      // No stars found. A single "(1,204)" in the card is still the listing's
-      // review count — Etsy renders exactly one. Two or more means we cannot
-      // tell which is the listing's, so we decline rather than guess (that
-      // ambiguity is how shop-level totals leaked in before).
-      const tokens = text(el).match(/\((\d[\d.,\s]*)\)/g) || [];
-      if (tokens.length !== 1) return null;
-      const only = tokens[0].match(/\((\d[\d.,\s]*)\)/);
-      return only ? parseCountToken(only[1]) : null;
-    }
+    // No stars found. A single "(1,204)" in the card is still the listing's
+    // review count — Etsy renders exactly one. Two or more means we cannot tell
+    // which is the listing's, so we decline rather than guess (that ambiguity is
+    // how shop-level totals leaked in before).
+    if (!hasRating) return loneParenthesisedCount(el);
 
     const container = ratingContainer(el);
     const scope = container || el;
@@ -636,8 +631,41 @@
         if (n !== null) return n;
       }
     }
-    const loose = text(scope).match(/\((\d[\d.,\s]*)\)/);
-    return loose ? parseCountToken(loose[1]) : null;
+    // Loose match within the rating scope, but under the single-token rule. It
+    // used to take the *first* parenthesised number it found, and because
+    // ratingContainer() can widen all the way to the card when it is hunting for
+    // a "(", that first number could be anything: a card reading "Bundle of (12)
+    // printable pages, (340) sold" reported 12 reviews.
+    const scoped = loneParenthesisedCount(scope);
+    if (scoped !== null) return scoped;
+
+    // Nothing beside the stars. Widen to the whole card under the same
+    // single-token rule used when there are no stars at all.
+    //
+    // This was the gap that left reviewCount null on most rows of a live run:
+    // ratingContainer() climbs at most three levels and settles for the star
+    // wrapper, so a count rendered as a *sibling* of that wrapper sat outside
+    // every scope we looked in. Listing 4507953646 came back `rating: 5,
+    // reviewCount: null` from its card while its own listing page stated 8
+    // reviews — the number was on the page, just not where we were looking.
+    //
+    // Widening is safe precisely because the rule is unchanged: exactly one
+    // parenthesised number in the card, or nothing. If stars are present that
+    // number is more certainly the review count, not less.
+    return loneParenthesisedCount(el);
+  }
+
+  /**
+   * The single "(N)" token inside a node, or null when there is not exactly one.
+   *
+   * @param {Element} node card or rating scope
+   * @returns {?number}
+   */
+  function loneParenthesisedCount(node) {
+    const tokens = text(node).match(/\((\d[\d.,\s]*)\)/g) || [];
+    if (tokens.length !== 1) return null;
+    const only = tokens[0].match(/\((\d[\d.,\s]*)\)/);
+    return only ? parseCountToken(only[1]) : null;
   }
 
   /** The smallest element that holds the rating, used to scope the count. */

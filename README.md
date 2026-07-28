@@ -582,13 +582,22 @@ than a `null`. So each of these requires positive evidence and otherwise stays
   `aria-label="Rating: 4.94 out of 5 stars, 779 reviews"` — because that is where
   Etsy actually publishes it. Nothing in the visible text states the number, so a
   `textContent`-only scan returned `null` for nearly every row of a live run.
-  Only rating-scoped elements are inspected, never the whole card, since
-  shop-level totals are labelled "N reviews" too. Failing that: the text beside
-  the stars, or a single `(1,482)` token when a card has exactly one. Two
-  candidates and no stars means we decline rather than pick. A count that repeats
-  across several listings from the *same shop* is a shop total, not a per-listing
-  figure, so it is cleared at the end of the page — one card cannot tell those
-  apart, but a page can.
+  Only rating-scoped elements are inspected for *labels*, never the whole card,
+  since shop-level totals are labelled "N reviews" too.
+
+  Failing that: the text beside the stars, then a single `(1,482)` token — first
+  within the rating scope, then across the whole card. That last widening matters,
+  because Etsy renders the count as a **sibling** of the star wrapper rather than
+  inside it, and the search used to stop at the wrapper. Listing 4507953646 came
+  back `rating: 5, reviewCount: null` from its card while its own listing page
+  stated 8 reviews.
+
+  Widening is safe because the rule does not change: **exactly one** parenthesised
+  number, or nothing. Two candidates means we decline rather than pick — a card
+  reading "Bundle of (12) printable pages, (340) sold" reports no count at all.
+  And a count that repeats across several listings from the *same shop* is a shop
+  total, not a per-listing figure, so it is cleared at the end of the page — one
+  card cannot tell those apart, but a page can.
 - **`isDigital`** is set when Etsy labels the listing ("Digital Download",
   "Instant Download"), whether as its own badge or inside a longer line. Absence
   means `null` (unknown), never `false`, because Etsy says nothing for physical
