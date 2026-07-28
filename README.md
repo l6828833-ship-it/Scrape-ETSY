@@ -238,6 +238,23 @@ Being straight about this, because these are the fields people most often expect
 | reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (its JSON-LD array plus the rendered pane) rather than depending on private API shapes. |
 | exact shop start date | Listings show either a year ("On Etsy since 2019" → `shopMemberSince`) or a duration ("11 months on Etsy" → `shopAgeMonths`). Neither is converted into the other, because a duration only pins the start date to a range. |
 
+### The three datasets
+
+A run produces three separate tables, and **which one you are looking at decides
+which columns exist**:
+
+| Dataset | Contains | Does **not** contain |
+|---|---|---|
+| `search` — Search rows | The search grid: query, position, title, price, shop, rating, reviewCount, badges, `isDigital` | `tags`, `description`, `favoritesCount`, `shopTotalSales`, stock, variations, materials |
+| `details` — Listing details | Everything above plus `tags`, `description`, favourites, stock, variations, materials, shop authority and the trend metrics | — |
+| `reviews` | One row per review | — |
+
+The search grid genuinely has no tags in it — Etsy does not put them there — so
+an export of that dataset can never contain them no matter how the scrape ran.
+If a field looks missing, check the dataset picker first: it is labelled with
+what each option holds, the preview says where the richer fields live, and after
+a run that produced details the picker switches to them automatically.
+
 ### Why is `tags` empty?
 
 Etsy does not print a listing's 13 tags anywhere on the page, so this is the one
@@ -271,6 +288,33 @@ now separates them: EHunt's own markup detected but no tag list means raise
 **EHunt wait** and leave its panel expanded; nothing detected at all means it is
 not installed, not enabled, or not permitted on that page. Its panel is also
 searched inside shadow roots, since injected UIs are commonly mounted in one.
+
+#### Waiting for the tag table, not just the panel
+
+EHunt's panel mounts in well under a second, but it then fetches that listing's
+figures from its own service and draws the tag table **several seconds later**.
+Waiting for the panel to merely *exist* therefore read it while the tag row was
+still empty and reported "no tags" for a listing that was about to have all
+thirteen. So the wait follows the panel's progress instead of a flat clock:
+
+| Stage | Meaning | What the wait does |
+|---|---|---|
+| 0 | no trace of EHunt | gives up after ~3s, so a browser without EHunt does not pay the full budget on every listing |
+| 1 | EHunt present, panel not drawn | waits |
+| 2 | panel frame up, empty | waits, and scrolls the panel into view since it can defer work while off-screen |
+| 3 | stats table in, tag row missing | waits |
+| 4 | tag table rendered | reads it and moves on immediately |
+
+Every time the panel advances a stage it earns another 10s, because visible
+progress is evidence that waiting will pay off, whereas silence is evidence that
+it will not — only progress buys more time. **EHunt wait** (default 20s, max
+120s) is the base budget; a 45s ceiling stops a permanently half-drawn panel
+stalling the run. If the tags still never arrive, the log names the furthest
+stage reached, e.g. `panel frame appeared but stayed empty`, which says whether
+to wait longer or to go and check EHunt itself.
+
+Whatever did render is kept either way, so a listing that times out mid-load
+still contributes the stats EHunt had already drawn.
 
 ### Keeping Etsy's data and EHunt's data apart
 

@@ -167,6 +167,8 @@ export async function fetchDetailViaTab(url, opts = {}) {
       ehuntFound: Boolean(result.ehuntFound),
       ehuntOnPage: Boolean(result.ehuntOnPage),
       ehuntTagCount: result.ehuntTagCount || 0,
+      // How far EHunt's panel got: 0 absent, 1 present, 2 frame, 3 stats, 4 tags.
+      ehuntStage: result.ehuntStage || 0,
     };
   } catch (err) {
     return {

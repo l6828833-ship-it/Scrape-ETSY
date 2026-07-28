@@ -87,12 +87,17 @@
           </label>
         </div>
 
+        <!-- The summary names the fields people come looking for, because this
+             section is collapsed by default and the checkbox inside it is the
+             only thing that produces tags, description or favourites. -->
         <details id="deep" class="advanced">
-          <summary>Deep listing intelligence (phase 2)</summary>
+          <summary>Deep listing intelligence — required for tags, description, favourites</summary>
           <label class="check">
             <input id="scrapeDetails" type="checkbox" />
-            <span><strong>Open each listing</strong> for the full dataset — favourites, stock,
-              variations, materials, shop authority, reviews</span>
+            <span><strong>Open each listing</strong> for the full dataset — <strong>tags</strong>,
+              <strong>description</strong>, favourites, stock, variations, materials, shop
+              authority, reviews. Etsy publishes none of these on the search grid, so without
+              this they cannot be collected at all.</span>
           </label>
           <div class="grid">
             <label class="field">
@@ -145,7 +150,10 @@
           </fieldset>
           <label class="field narrow">
             <span class="label">EHunt wait (ms)</span>
-            <input id="ehuntWaitMs" type="number" min="0" max="60000" step="500" />
+            <input id="ehuntWaitMs" type="number" min="0" max="120000" step="500" />
+            <span class="hint">Budget per listing for EHunt's tag table. The wait keeps going
+              past this while the panel is still filling in, and stops early when EHunt
+              is not installed.</span>
           </label>
 
           <p class="warn" id="deepCost">
@@ -292,9 +300,12 @@
 
         <label class="field dataset-picker">
           <span class="label">Dataset</span>
+          <!-- Each option says what is actually in it. "Search rows" alone gave
+               no hint that tags and description are not in there, which is the
+               single most common source of "the field is missing". -->
           <select id="dataset">
-            <option value="search">Search rows</option>
-            <option value="details">Listing details</option>
+            <option value="search">Search rows — no tags</option>
+            <option value="details">Listing details — tags, description</option>
             <option value="reviews">Reviews</option>
             <option value="all">All datasets (Excel / JSON)</option>
           </select>

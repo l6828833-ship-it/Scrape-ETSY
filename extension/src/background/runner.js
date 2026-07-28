@@ -211,6 +211,8 @@ export async function startRun(rawSettings) {
     ehuntHits: 0,
     ehuntOnPage: 0,
     ehuntTagHits: 0,
+    /** Furthest EHunt got on any listing: 0 absent … 4 tags rendered. */
+    ehuntBestStage: 0,
     // Tag-route accounting, so an empty `tags` column can be explained rather
     // than merely counted.
     tagPages: 0,
@@ -604,9 +606,12 @@ async function detailPhase(ctx) {
       // list never filled in. Waiting longer is the fix, not reinstalling.
       await store.log('warn',
         `EHunt was on the page for ${ctx.ehuntOnPage}/${ctx.detailsCaptured} listing(s) but its `
-        + `tag list never finished rendering within ${Math.round(settings.ehuntWaitMs / 1000)}s. `
-        + 'Raise "EHunt wait" — it fetches its own data per listing and is slower than Etsy. '
-        + 'Also make sure its panel is expanded, since it renders tags only when open.');
+        + 'tag table never finished rendering. The wait already extends itself while the panel '
+        + `is visibly still loading, so past ${Math.round(settings.ehuntWaitMs / 1000)}s it had `
+        + 'stopped making progress. Raise "EHunt wait", make sure its panel is expanded (it '
+        + 'renders tags only when open), and check you are still signed in to EHunt.');
+      await store.log('info',
+        `Furthest EHunt got on any listing: ${describeEhuntStage(ctx.ehuntBestStage)}.`);
     } else {
       await store.log('warn',
         'EHunt was not detected on any listing page. Check that the EHunt - Etsy Rank Tool '
@@ -622,6 +627,20 @@ async function detailPhase(ctx) {
   }
   await reportDetailCoverage(ctx.detailGaps, ctx.detailsCaptured, ctx.detailEscalated ? ENGINES.TAB : settings.engine);
   await reportTagCoverage(ctx);
+}
+
+/**
+ * Plain English for how far EHunt's panel got, so "it didn't work" becomes a
+ * specific stage the user can act on.
+ */
+function describeEhuntStage(stage) {
+  switch (stage) {
+    case 4: return 'tag table rendered';
+    case 3: return 'stats table rendered but no tag row';
+    case 2: return 'panel frame appeared but stayed empty';
+    case 1: return 'EHunt is on the page but never drew its panel';
+    default: return 'no trace of EHunt';
+  }
 }
 
 /** Tally what each listing page offered the tag harvester. */
@@ -763,6 +782,7 @@ async function processDetailTask(ctx, target, label) {
     if (outcome.aborted || ctx.signal.aborted) return;
     if (outcome.ehuntFound) ctx.ehuntHits += 1;
     if (outcome.ehuntOnPage) ctx.ehuntOnPage += 1;
+    if (outcome.ehuntStage > ctx.ehuntBestStage) ctx.ehuntBestStage = outcome.ehuntStage;
     if (outcome.ehuntTagCount) ctx.ehuntTagHits += 1;
     noteTagSources(ctx, outcome.counts);
 

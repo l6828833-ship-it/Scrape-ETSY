@@ -90,6 +90,8 @@ const PREVIEW_COLUMNS = {
 
 let rowTotal = -1;
 let currentDataset = DATASETS.search;
+/** Once the user picks a dataset, stop switching it for them. */
+let datasetChosenByUser = false;
 
 // --------------------------------------------------------------- messaging
 
@@ -257,8 +259,11 @@ function renderPreview(rows, total, dataset) {
   if (!rows.length) {
     body.innerHTML = `<tr class="empty"><td colspan="${columns.length}">No rows yet.</td></tr>`;
     el('previewHint').textContent = dataset === DATASETS.details
-      ? 'Enable "Deep listing intelligence" before starting a run to populate this.'
-      : '';
+      ? 'Empty because "Deep listing intelligence" was off for this run — tick it and run again '
+        + 'to collect tags, description and favourites.'
+      : (dataset === DATASETS.search
+        ? 'Tags, description and favourites are in the "Listing details" dataset, not this one.'
+        : '');
     return;
   }
 
@@ -274,9 +279,14 @@ function renderPreview(rows, total, dataset) {
     frag.append(tr);
   }
   body.replaceChildren(frag);
-  el('previewHint').textContent = total > rows.length
+  const shown = total > rows.length
     ? `Showing first ${rows.length} of ${fmt(total)} rows — export for the full dataset.`
     : `Showing all ${fmt(total)} rows.`;
+  // Say it on the screen where the field is missing, not only in the run log.
+  el('previewHint').textContent = dataset === DATASETS.search
+    ? `${shown} This is the search grid; tags, description and favourites are in `
+      + '"Listing details".'
+    : shown;
 }
 
 function td(value, className) {
@@ -374,7 +384,25 @@ async function refresh({ withRows = true } = {}) {
   if (withRows) await refreshPreview();
 }
 
+/**
+ * Land on the richer dataset once a run has produced one.
+ *
+ * The picker defaults to the search grid, which has no tags, description or
+ * favourites in its schema at all — so someone who ran a deep scrape and then
+ * exported what was on screen got a file that could not contain the fields they
+ * ran the deep scrape *for*, with nothing to indicate why. Only done once, and
+ * only if the user has not chosen a dataset themselves.
+ */
+async function preferDetailsDataset() {
+  if (datasetChosenByUser || currentDataset !== DATASETS.search) return;
+  const { total } = await fetchDataset(DATASETS.details, 1);
+  if (!total) return;
+  currentDataset = DATASETS.details;
+  el('dataset').value = DATASETS.details;
+}
+
 async function refreshPreview() {
+  await preferDetailsDataset();
   const dataset = currentDataset === DATASETS.all ? DATASETS.search : currentDataset;
   const { rows, total } = await fetchDataset(dataset, PREVIEW_LIMIT);
   rowTotal = total;
@@ -458,6 +486,14 @@ async function onExport(format) {
     const name = await exportDataset(currentDataset, format, data, {
       includeDebug: el('includeDebug').checked,
     });
+    // Exporting the grid while richer rows are sitting right there is almost
+    // always a mistake, and the resulting file gives no clue that it is one.
+    if (currentDataset === DATASETS.search && data[DATASETS.details].length) {
+      toast(`Saved ${name} — note this is the search grid; `
+        + `${data[DATASETS.details].length} listing detail row(s) with tags and description `
+        + 'are under the "Listing details" dataset.');
+      return;
+    }
     toast(`Saved ${name}`);
   } catch (err) {
     toast(String(err.message || err), true);
@@ -501,6 +537,14 @@ async function onCopyJson() {
       includeDebug,
     });
     await navigator.clipboard.writeText(JSON.stringify(shaped, null, 2));
+    if (dataset === DATASETS.search) {
+      const { total: detailTotal } = await fetchDataset(DATASETS.details, 1);
+      if (detailTotal) {
+        toast(`Copied ${rows.length} search row(s) — tags and description are in the `
+          + '"Listing details" dataset, not this one.');
+        return;
+      }
+    }
     toast(`Copied ${rows.length} row(s) as JSON`);
   } catch (err) {
     toast(String(err.message || err), true);
@@ -542,6 +586,7 @@ function wire() {
 
   el('dataset').addEventListener('change', async () => {
     currentDataset = el('dataset').value;
+    datasetChosenByUser = true;
     rowTotal = -1;
     await refreshPreview();
   });

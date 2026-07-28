@@ -97,23 +97,86 @@
     return clicked;
   }
 
+  /** Bring EHunt's panel on screen; it may defer work while off-screen. */
+  function scrollPanelIntoView() {
+    const E = globalThis.EtsyEhunt;
+    let node = null;
+    for (const sel of E.SELECTORS.panel) {
+      try {
+        node = document.querySelector(sel);
+      } catch (_) {
+        node = null;
+      }
+      if (node) break;
+    }
+    if (!node || typeof node.scrollIntoView !== 'function') return false;
+    try {
+      node.scrollIntoView({ block: 'center' });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /**
-   * Wait for the EHunt panel, then parse it. Returns null when EHunt is not
-   * installed or has not rendered — an absent third-party panel is a normal
-   * outcome, never an error.
+   * Wait for EHunt's *tag table*, not merely for its panel, then parse it.
+   *
+   * The panel container mounts in well under a second, but EHunt then fetches
+   * that listing's figures from its own service and fills the table in several
+   * seconds later. Waiting only for the container therefore parsed a panel whose
+   * tag row was still empty and reported "no tags" for a listing that was about
+   * to have all thirteen.
+   *
+   * So the wait follows the panel's progress instead of a flat clock:
+   *
+   *   * every time it advances a stage, more time is granted, because visible
+   *     progress is evidence that waiting will pay off;
+   *   * if no trace of EHunt appears within the short probe window, it gives up
+   *     at once rather than burning the whole budget on every listing of a run
+   *     in a browser that does not have EHunt installed;
+   *   * a hard ceiling stops a permanently half-rendered panel stalling the run.
+   *
+   * Returns the richest panel seen, so a run that times out mid-load still keeps
+   * whatever stats did render. Null means EHunt was never there, which is a
+   * normal outcome and not an error.
+   *
+   * @returns {Promise<?object>}
    */
   async function readEhunt(timeoutMs) {
-    const deadline = Date.now() + timeoutMs;
-    let panel = null;
-    while (Date.now() < deadline) {
-      if (globalThis.EtsyEhunt.isPresent(document)) {
-        panel = globalThis.EtsyEhunt.parsePanel(document);
-        // Its tag list fills in after the panel frame appears; wait for tags.
+    const E = globalThis.EtsyEhunt;
+    const started = Date.now();
+    let best = null;
+    let bestStage = 0;
+    let lastProgressAt = started;
+    let scrolled = false;
+
+    for (;;) {
+      const stage = E.panelStage(document);
+
+      if (stage > bestStage) {
+        bestStage = stage;
+        lastProgressAt = Date.now();
+      }
+
+      // Once the frame is up, put it on screen — EHunt can hold off rendering
+      // its table until the panel is actually visible.
+      if (stage >= 2 && !scrolled) scrolled = scrollPanelIntoView();
+
+      if (stage >= 2) {
+        const panel = E.parsePanel(document);
+        if (panel) best = panel;
         if (panel && panel.tags && panel.tags.length) return panel;
       }
-      await sleep(300);
+
+      const keepWaiting = E.shouldKeepWaitingForEhunt({
+        bestStage,
+        elapsedMs: Date.now() - started,
+        budgetMs: timeoutMs,
+        sinceProgressMs: Date.now() - lastProgressAt,
+      });
+      if (!keepWaiting) return best;
+      await sleep(250);
     }
-    return panel;
   }
 
   globalThis.__etsyExtractDetail = async function __etsyExtractDetail(options) {
@@ -136,7 +199,8 @@
       // the one place a listing's real 13 tags appear on the page. It renders
       // asynchronously, so wait briefly before reading.
       if (context.useEhuntPanel !== false && globalThis.EtsyEhunt) {
-        const ehunt = await readEhunt(opts.ehuntTimeoutMs == null ? 6000 : opts.ehuntTimeoutMs);
+        const ehunt = await readEhunt(opts.ehuntTimeoutMs == null ? 20000 : opts.ehuntTimeoutMs);
+        result.ehuntStage = globalThis.EtsyEhunt.panelStage(document);
         result.record = globalThis.EtsyEhunt.mergeEhuntRecord(result.record, ehunt);
         result.ehuntFound = Boolean(ehunt);
         // "Panel never appeared" and "panel appeared but its tag list was still
