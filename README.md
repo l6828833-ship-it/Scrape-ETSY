@@ -238,6 +238,23 @@ Being straight about this, because these are the fields people most often expect
 | reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (its JSON-LD array plus the rendered pane) rather than depending on private API shapes. |
 | exact shop start date | Listings show either a year ("On Etsy since 2019" → `shopMemberSince`) or a duration ("11 months on Etsy" → `shopAgeMonths`). Neither is converted into the other, because a duration only pins the start date to a range. |
 
+### The three datasets
+
+A run produces three separate tables, and **which one you are looking at decides
+which columns exist**:
+
+| Dataset | Contains | Does **not** contain |
+|---|---|---|
+| `search` — Search rows | The search grid: query, position, title, price, shop, rating, reviewCount, badges, `isDigital` | `tags`, `description`, `favoritesCount`, `shopTotalSales`, stock, variations, materials |
+| `details` — Listing details | Everything above plus `tags`, `description`, favourites, stock, variations, materials, shop authority and the trend metrics | — |
+| `reviews` | One row per review | — |
+
+The search grid genuinely has no tags in it — Etsy does not put them there — so
+an export of that dataset can never contain them no matter how the scrape ran.
+If a field looks missing, check the dataset picker first: it is labelled with
+what each option holds, the preview says where the richer fields live, and after
+a run that produced details the picker switches to them automatically.
+
 ### Why is `tags` empty?
 
 Etsy does not print a listing's 13 tags anywhere on the page, so this is the one
