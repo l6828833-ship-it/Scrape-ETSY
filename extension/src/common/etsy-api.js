@@ -107,6 +107,9 @@ export function mapApiListing(payload) {
     listingCreationDate: isoFromEpoch(
       listing.original_creation_timestamp || listing.creation_timestamp,
     ),
+    // `original_creation_timestamp` survives renewals, unlike the page's
+    // "Listed on" line, so this date can legitimately be read as the listing's age.
+    listingCreationDateSource: 'api',
     isPersonalizable: bool(listing.is_personalizable),
     personalizationRequired: bool(listing.personalization_is_required),
     taxonomyId: int(listing.taxonomy_id),

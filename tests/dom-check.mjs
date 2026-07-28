@@ -1037,6 +1037,50 @@ try {
       assert.deepEqual(out[0].options, ['A4', 'US Letter']);
     });
 
+    await test('Star Seller needs a badge, not the words appearing somewhere', async () => {
+      // A real run reported isStarSeller true on 15 listings out of 15, including
+      // a shop with one review. Etsy explains the programme in help text on
+      // listings that do not have it, so a whole-page substring test is always
+      // true.
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const parse = (html) => new DOMParser().parseFromString(
+          '<html><body>' + html + '</body></html>', 'text/html');
+        return JSON.stringify({
+          helpTextOnly: EtsyDetail.readStarSeller(parse(
+            '<p>Star Seller status is awarded to shops that consistently earn'
+            + ' five-star reviews, ship on time and reply quickly to messages.'
+            + ' Learn more about the Star Seller programme and how it works.</p>'),
+            'irrelevant'),
+          badge: EtsyDetail.readStarSeller(parse(
+            '<span class="shop-star-seller-badge">Star Seller</span>'), ''),
+          shortLine: EtsyDetail.readStarSeller(parse('<p>Star Seller</p>'), ''),
+          nothing: EtsyDetail.readStarSeller(parse('<p>An ordinary listing</p>'), '')
+        });
+      })()`));
+      assert.equal(out.helpTextOnly, false, 'prose about the programme is not a badge');
+      assert.equal(out.badge, true);
+      assert.equal(out.shortLine, true, 'a short line on its own is a badge');
+      assert.equal(out.nothing, false);
+    });
+
+    await test('image count counts photos, not <img> elements', async () => {
+      // Etsy renders the same photo at several sizes — carousel, thumbnail strip,
+      // zoom — so counting elements produced 20, 14 and 11 on listings where
+      // Etsy's own maximum is 10 photos. The photo id in the URL is stable across
+      // sizes.
+      const out = JSON.parse(await session.evaluate(`(() => {
+        const doc = new DOMParser().parseFromString(
+          '<html><body><ul data-carousel-pane-list>'
+          + '<li><img src="https://i.etsystatic.com/1/r/il/a/7551440708/il_794xN.7551440708_4t3f.jpg"></li>'
+          + '<li><img src="https://i.etsystatic.com/1/r/il/a/7551440708/il_75x75.7551440708_4t3f.jpg"></li>'
+          + '<li><img src="https://i.etsystatic.com/1/r/il/a/7551440708/il_1588xN.7551440708_4t3f.jpg"></li>'
+          + '<li><img src="https://i.etsystatic.com/1/r/il/b/8086196461/il_794xN.8086196461_ipdq.jpg"></li>'
+          + '</ul></body></html>', 'text/html');
+        return JSON.stringify(EtsyDetail.fromDom(doc).imageCount);
+      })()`));
+      assert.equal(out, 2, 'four <img> elements, but only two distinct photos');
+    });
+
     await test('EHunt\'s panel text is not read as Etsy page copy', async () => {
       // EHunt injects into the same body, and its table labels read exactly like
       // Etsy copy. Its "Ships From | United States | Other Data" cells turned

@@ -70,6 +70,11 @@
       'textarea[maxlength][id*="personalization"]',
     ],
     shopLink: ['a[href*="/shop/"]'],
+    starSeller: [
+      '[data-star-seller]',
+      '[class*="star-seller" i]',
+      '[data-appears-component-name*="star_seller" i]',
+    ],
     shippingRegion: [
       '[data-shipping-and-returns]',
       '[data-buy-box-region="shipping"]',
@@ -534,14 +539,34 @@
 
     // --- dates -------------------------------------------------------------
     const listed = blob.match(/Listed on\s+([A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})/i);
-    if (listed) out.listingCreationDate = toIsoDate(listed[1]);
+    if (listed) {
+      out.listingCreationDate = toIsoDate(listed[1]);
+      // Etsy resets "Listed on" every time a listing auto-renews, so this is a
+      // renewal date, not the date the listing was created. On a real run it read
+      // "yesterday" for listings with 205 reviews and four-year-old shops. It is
+      // recorded, but flagged, because treating it as an age turns it into
+      // nonsense — see metrics.js.
+      out.listingCreationDateSource = 'etsy-listed-on';
+    }
 
+    // Counted by distinct photo, not by <img> element. Etsy renders the same
+    // photo several times at different sizes — the carousel pane, the thumbnail
+    // strip, a zoom copy — so counting elements gave 20, 14 and 11 on listings
+    // where Etsy's own maximum is 10 photos. Every Etsy image URL carries the
+    // photo's id ("il_794xN.7551440708_4t3f.jpg" → 7551440708), which identifies
+    // the photo independently of the size it is being served at.
     const images = all(doc, SELECTORS.images).filter((img) => {
       const src = img.getAttribute('src') || '';
       return /etsystatic/.test(src);
     });
-    if (images.length) {
-      out.imageCount = images.length;
+    const distinct = new Set();
+    for (const img of images) {
+      const src = img.getAttribute('src') || '';
+      const id = src.match(/il_[^/]*?(\d{8,})/);
+      distinct.add(id ? id[1] : src);
+    }
+    if (distinct.size) {
+      out.imageCount = distinct.size;
       if (!out.mainImage) out.mainImage = images[0].getAttribute('src');
     }
 
@@ -827,7 +852,7 @@
     }
     const sales = blob.match(/([\d.,]+)\s*(?:sales|sold)\b/i);
     if (sales) out.shopTotalSales = toInt(sales[1]);
-    out.isStarSeller = /star seller/i.test(blob);
+    out.isStarSeller = readStarSeller(doc, blob);
     out.shopMemberSince = readMemberSince(doc, blob);
     out.shopAgeMonths = readShopAgeMonths(doc, blob);
     const location = readLocation(doc, blob);
@@ -865,6 +890,29 @@
       return total !== null && total > 0 && total <= 300 ? total : null;
     }
     return null;
+  }
+
+  /**
+   * Star Seller, from a badge rather than from the words appearing anywhere.
+   *
+   * `/star seller/i.test(pageText)` reported true on **every** listing of a real
+   * run — fifteen for fifteen, including a shop with one review. Etsy explains
+   * the Star Seller programme in help text and tooltips on listings that do not
+   * have it, so the phrase is present either way. This is the same mistake the
+   * search-card badges already had: testing a whole page for a substring.
+   *
+   * A badge is a short piece of text. Anything longer is prose about the
+   * programme, not a claim that this shop is in it.
+   */
+  function readStarSeller(doc, blob) {
+    const badge = first(doc, SELECTORS.starSeller);
+    if (badge && /star seller/i.test(text(badge))) return true;
+    for (const node of all(doc, SELECTORS.textLine)) {
+      const t = text(node);
+      if (t && t.length <= 40 && /\bstar seller\b/i.test(t)) return true;
+    }
+    // Deliberately no whole-page fallback: with one, this is always true.
+    return false;
   }
 
   function readShopAgeMonths(doc, blob) {
@@ -1096,6 +1144,10 @@
       imageCount: pick(dom.imageCount, ld.imageCount),
       categoryPath: pick(ld.categoryPath, dom.categoryPath, ld.categoryPathFallback),
       listingCreationDate: pick(dom.listingCreationDate, ld.listingCreationDate),
+      // Which source the date came from, because only some of them report the
+      // date the listing was *created*. Etsy's on-page "Listed on" is reset by
+      // auto-renewal, so it cannot be used as an age.
+      listingCreationDateSource: pick(dom.listingCreationDateSource),
 
       favoritesCount: pick(dom.favoritesCount),
       cartCount: pick(dom.cartCount),
@@ -1164,6 +1216,7 @@
     pickLongestText,
     readFreeShipping,
     readMemberSince,
+    readStarSeller,
     readShopAgeMonths,
     readTags,
     readVariations,
