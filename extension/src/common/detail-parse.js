@@ -160,6 +160,24 @@
   ];
 
   /**
+   * Is this element part of another extension's panel rather than Etsy's page?
+   *
+   * Cutting the panels out of the text blob was not enough: EHunt renders its
+   * tag list as `/market/<term>` links, which is exactly the shape Etsy's own
+   * tag harvester looks for. So EHunt's tags were being scooped up and then
+   * labelled `tagSource: 'page-links'` — third-party data reported as Etsy's.
+   */
+  function insideThirdPartyPanel(el) {
+    if (!el || typeof el.closest !== 'function') return false;
+    for (const sel of THIRD_PARTY_PANELS) {
+      try {
+        if (el.closest(sel)) return true;
+      } catch (_) { /* unsupported selector */ }
+    }
+    return false;
+  }
+
+  /**
    * Whole-page text, used for the many facts Etsy only renders as copy.
    *
    * Third-party panels are cut out first. When EHunt is running, its own table
@@ -451,8 +469,10 @@
     if (priceEl) out.price = P.parsePrice(text(priceEl));
     const symbol = text(first(doc, SELECTORS.currencySymbol));
     if (symbol) out.currency = P.currencyFromSymbol(symbol);
+    // Scoped to the buy box first; a bare page-wide strike-through is as likely
+    // to belong to a "more from this shop" card as to this listing.
     const wasEl = first(doc, SELECTORS.originalPrice);
-    if (wasEl) {
+    if (wasEl && !insideThirdPartyPanel(wasEl)) {
       const was = P.parsePrice(text(wasEl));
       if (was !== null) out.originalPrice = was;
     }
@@ -525,7 +545,12 @@
       if (!out.mainImage) out.mainImage = images[0].getAttribute('src');
     }
 
-    const shopReviews = blob.match(/([\d.,]+)\s*(?:shop\s+)?reviews?\b/i);
+    // The word "shop" is now required. Optional, it matched the *listing's* own
+    // "23 reviews" line, so a shop with 18,072 sales reported 23 shop reviews —
+    // shopReviewCount and reviewCount came out identical on every listing, which
+    // is a giveaway that one of them was not being read at all.
+    const shopReviews = blob.match(/([\d.,]+)\s*(?:shop|store|seller)\s+reviews?\b/i)
+      || blob.match(/(?:shop|store|seller)\s+reviews?\s*[:(]?\s*([\d.,]+)/i);
     if (shopReviews) out.shopReviewCount = toInt(shopReviews[1]);
 
     out.detailSource = 'dom';
@@ -591,20 +616,43 @@
     return only ? toInt(only[1]) : null;
   }
 
+  /**
+   * Dropdowns on a listing page that are not product options.
+   *
+   * `.wt-select select` matches Etsy's *"Report this item"* dialog, so every
+   * digital listing came back with a variation called "Choose a reason…" whose
+   * options were "There's a problem with my order" and "It uses my intellectual
+   * property without permission" — and a `variationCount` of 4 derived from them.
+   * That is worse than reporting nothing: it reads as real product data.
+   */
+  const NOT_A_VARIATION_OPTION =
+    /choose a reason|there.?s a problem with my order|intellectual property|meets? etsy.?s policies|report this item/i;
+  const NOT_A_VARIATION_NAME = /reason|report|quantity|sort by|country|currency|language/i;
+
   function readVariations(doc) {
     const out = [];
     for (const select of all(doc, SELECTORS.variationSelect)) {
+      if (insideThirdPartyPanel(select)) continue;
       const label = select.getAttribute('aria-label')
         || labelTextFor(doc, select)
         || select.getAttribute('name')
         || select.getAttribute('id')
         || 'option';
+      const name = String(label).replace(/\s+/g, ' ').replace(/:$/, '').trim();
       const options = Array.from(select.options || select.querySelectorAll('option') || [])
         .map((o) => text(o))
         .filter((t) => t && !/^select an option|^choose an option/i.test(t));
-      if (options.length) {
-        out.push({ name: String(label).replace(/\s+/g, ' ').replace(/:$/, '').trim(), options });
+      if (!options.length) continue;
+
+      // Vetoed on the name *and* on the contents, because Etsy's report dialog
+      // labels its dropdown with a placeholder rather than a name we can match.
+      const declaredVariation = select.hasAttribute('data-variation-id')
+        || /^variation-selector/.test(select.getAttribute('id') || '');
+      if (!declaredVariation) {
+        if (NOT_A_VARIATION_NAME.test(name)) continue;
+        if (options.some((o) => NOT_A_VARIATION_OPTION.test(o))) continue;
       }
+      out.push({ name, options });
     }
     return out;
   }
@@ -684,6 +732,7 @@
 
     for (const a of all(doc, SELECTORS.marketLinks)) {
       if (tags.length >= 13) break;
+      if (insideThirdPartyPanel(a)) continue;
       const href = a.getAttribute('href') || '';
       const m = href.match(/\/market\/([^/?#]+)/);
       push(text(a) || (m ? decodeURIComponent(m[1]).replace(/[_+-]+/g, ' ') : ''));
@@ -691,6 +740,7 @@
 
     // Tag chips also appear as search links; skip navigation/category links.
     for (const a of all(doc, SELECTORS.searchChips)) {
+      if (insideThirdPartyPanel(a)) continue;
       if (tags.length >= 13) break;
       const label = text(a);
       if (!label || /^see more|^more like this/i.test(label)) continue;
@@ -1022,7 +1072,13 @@
       P.listingIdFromUrl(ctx.sourceUrl || ''));
     const url = pick(ld.url, ctx.sourceUrl, listingId ? `https://www.etsy.com/listing/${listingId}` : null);
     const price = pick(dom.price, ld.price);
-    const originalPrice = pick(dom.originalPrice, ld.originalPrice);
+    // A "was" price has to be higher than the current one, or it is not a former
+    // price at all. A real listing came back with price 3.97 and originalPrice
+    // 1.19, picked from a strike-through somewhere else on the page — a number
+    // that reads like a discount while describing nothing.
+    const originalCandidate = pick(dom.originalPrice, ld.originalPrice);
+    const originalPrice = (originalCandidate !== null && price !== null
+      && originalCandidate <= price) ? null : originalCandidate;
 
     return {
       listingId: listingId ? String(listingId) : null,
@@ -1110,6 +1166,8 @@
     readMemberSince,
     readShopAgeMonths,
     readTags,
+    readVariations,
+    insideThirdPartyPanel,
     describeTagSources,
     THIRD_PARTY_PANELS,
     fromJsonLd,

@@ -316,6 +316,36 @@ to wait longer or to go and check EHunt itself.
 Whatever did render is kept either way, so a listing that times out mid-load
 still contributes the stats EHunt had already drawn.
 
+### Keeping Etsy's data and EHunt's data apart
+
+EHunt injects into the same `<body>` as Etsy's own markup, and the two are easy
+to confuse in ways that look like real data:
+
+- **Its tag links.** EHunt renders its tags as `/market/<term>` links — exactly
+  the shape Etsy's own tag harvester looks for. So EHunt's tags were being picked
+  up by the page-link route and exported as `tagSource: 'page-links'`. Anything
+  inside a third-party panel is now skipped, and `tagSource` is never re-derived
+  after the fact, so it keeps saying what actually produced the tags.
+- **Its labels.** Covered above: the panel is cut out of the page-text blob, so
+  "Ships From / United States / Other Data" can no longer become a shopLocation.
+
+### Two more things that are not what they look like
+
+- **`variations` is not every `<select>` on the page.** Etsy's *"Report this
+  item"* dialog is a `.wt-select select`, so every listing was reporting a
+  variation named "Choose a reason…" whose options were "There's a problem with
+  my order" and "It uses my intellectual property without permission" — with a
+  `variationCount` computed from them. Selects are now vetoed by name *and* by
+  option text unless they declare themselves a variation.
+- **`originalPrice` must exceed `price`.** A real listing came back at 3.97 with
+  an originalPrice of 1.19, read from a strike-through elsewhere on the page. A
+  former price is higher by definition, so a lower one is dropped rather than
+  exported as a discount that never happened.
+- **`shopReviewCount` requires the word "shop".** Optional, the pattern matched
+  the *listing's* own "23 reviews" line, so a shop with 18,072 sales reported 23
+  shop reviews — and `shopReviewCount` came out identical to `reviewCount` on
+  every row, which is the giveaway that one of them was not being read at all.
+
 ### If a deep-scrape field comes back empty
 
 The run now tells you. Each listing logs what it found — `1482 favs, 940 chars
@@ -568,7 +598,13 @@ remote scripts. Or **Copy JSON** to the clipboard.
 Pick a dataset first, or choose **All datasets** to get one Excel workbook with a
 sheet per dataset (search rows / listing details / reviews) or a single JSON
 object containing all three. CSV and JSONL hold one table each, so they refuse
-"all" rather than silently exporting only part of it. Nested values (`variations`,
+"all" rather than silently exporting only part of it. **Copy JSON** under "All
+datasets" copies all three too — it previously fell back to the search rows
+alone, which handed over one table while the picker said three. Note the
+on-screen preview is a single table either way, so under "All datasets" it shows
+the search rows and says so; the export still contains everything.
+
+Nested values (`variations`,
 `materials`, `tags`, `photos`) stay real arrays in JSON and are flattened for
 spreadsheets — `Size: A4 | A3; Color: Sage`.
 

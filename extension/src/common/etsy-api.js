@@ -219,12 +219,15 @@ function fail(status, error, flags = {}) {
  */
 export function mergeApiRecord(scraped, apiRecord) {
   const base = scraped || {};
+  // Whatever produced the tags already recorded how it got them. Re-deriving the
+  // provenance here overwrote it: tags read from the EHunt panel came out
+  // labelled "page-links", so the one field whose job is to say how much to
+  // trust the tags was lying about them.
+  const keepSource = () => base.tagSource
+    || (base.tags && base.tags.length ? 'page-links' : null);
+
   if (!apiRecord) {
-    return {
-      ...base,
-      tagSource: base.tags && base.tags.length ? 'page-links' : null,
-      apiEnriched: false,
-    };
+    return { ...base, tagSource: keepSource(), apiEnriched: false };
   }
   const merged = { ...base };
   for (const [key, value] of Object.entries(apiRecord)) {
@@ -232,9 +235,7 @@ export function mergeApiRecord(scraped, apiRecord) {
     if (Array.isArray(value) && !value.length) continue;
     merged[key] = value;
   }
-  merged.tagSource = apiRecord.tags && apiRecord.tags.length
-    ? 'api'
-    : (base.tags && base.tags.length ? 'page-links' : null);
+  merged.tagSource = apiRecord.tags && apiRecord.tags.length ? 'api' : keepSource();
   merged.apiEnriched = true;
   return merged;
 }
