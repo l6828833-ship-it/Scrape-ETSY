@@ -238,6 +238,19 @@ Being straight about this, because these are the fields people most often expect
 | reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (its JSON-LD array plus the rendered pane) rather than depending on private API shapes. |
 | exact shop start date | Listings show either a year ("On Etsy since 2019" → `shopMemberSince`) or a duration ("11 months on Etsy" → `shopAgeMonths`). Neither is converted into the other, because a duration only pins the start date to a range. |
 
+### Reading the tags on screen
+
+The **Tags** column in the `details` table shows the tags themselves, one chip
+each — not a count. It previously read `13~`, which is the least useful thing that
+cell could say about the field most people open this tool for.
+
+- Hover a chip to see EHunt's search volume for that tag, where it was read.
+- Hover the cell to get the whole list as one comma-separated line, so it can be
+  read or copied without exporting anything.
+- The marker after the chips is the provenance: **API** (the literal tags from
+  Etsy's API), **EHunt** (the real tags, via a third party) or **~** (harvested
+  from page links — a close proxy, not the literal list).
+
 ### The three datasets
 
 A run produces three separate tables, and **which one you are looking at decides

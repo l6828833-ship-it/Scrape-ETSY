@@ -354,6 +354,34 @@ input:focus, select:focus, textarea:focus {
 .badge.free { color: var(--green); }
 .badge.best { color: var(--orange); }
 
+/* Tag chips. Given a generous minimum width and allowed to wrap, because the
+   whole point of the column is reading the tags, not counting them. */
+.preview td.tags {
+  min-width: 260px;
+  max-width: 420px;
+  white-space: normal;
+  line-height: 1.7;
+}
+.tag {
+  display: inline-block;
+  font-size: 10px;
+  padding: 1px 5px;
+  margin: 0 3px 2px 0;
+  border-radius: 9px;
+  background: var(--bg-inset);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.tag-source {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-left: 2px;
+  cursor: help;
+}
+
 /* ----------------------------------------------------------------- footer */
 
 .app-footer {
