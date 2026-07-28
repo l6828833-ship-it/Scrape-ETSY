@@ -10,6 +10,7 @@ import { fetchSearchPage } from './fetch-engine.js';
 import { scrapeInTab, scrapeExistingTab } from './tab-engine.js';
 import { parseHtmlOffscreen, offscreenAvailable, closeOffscreen } from './offscreen.js';
 import { buildListingUrl, fetchDetailViaFetch, fetchDetailViaTab } from './detail-engine.js';
+import { fetchListingFromApi, mergeApiRecord, API_RATE } from '../common/etsy-api.js';
 import * as history from './history.js';
 import * as store from './store.js';
 import * as proxy from './proxy.js';
@@ -184,6 +185,11 @@ export async function startRun(rawSettings) {
     /** How often each key deep-scrape field came back empty. */
     detailGaps: {},
     detailsCaptured: 0,
+    /** Etsy API enrichment bookkeeping. */
+    apiHits: 0,
+    apiMisses: 0,
+    apiDisabled: false,
+    lastApiCallAt: 0,
   };
 
   const workerCount = Math.min(settings.maxConcurrency, Math.max(1, settings.queries.length * settings.maxPagesPerQuery));
@@ -451,6 +457,11 @@ async function detailPhase(ctx) {
 
   await Promise.all(workers);
   await history.persistNow();
+  if (settings.etsyApiKey && !ctx.apiDisabled) {
+    await store.log(ctx.apiHits ? 'success' : 'warn',
+      `Etsy API enriched ${ctx.apiHits}/${ctx.detailsCaptured} listing(s)`
+      + `${ctx.apiMisses ? `, ${ctx.apiMisses} lookup(s) failed` : ''}`);
+  }
   await reportDetailCoverage(ctx.detailGaps, ctx.detailsCaptured, ctx.detailEscalated ? ENGINES.TAB : settings.engine);
 }
 
@@ -527,10 +538,14 @@ async function processDetailTask(ctx, target, label) {
       continue;
     }
 
-    // Snapshot first, then attach the derived velocity metrics.
+    // Optional API pass: the only source for the real 13 tags. Runs before the
+    // snapshot so history records the authoritative favourite count.
+    const withApi = await enrichFromApi(ctx, outcome.record, label);
+
+    // Snapshot second, then attach the derived velocity metrics.
     const enriched = settings.trackHistory
-      ? await history.recordAndSummarize(outcome.record)
-      : await history.recordAndSummarize(outcome.record, { track: false });
+      ? await history.recordAndSummarize(withApi)
+      : await history.recordAndSummarize(withApi, { track: false });
 
     await store.upsertDetail(enriched);
 
@@ -555,6 +570,46 @@ async function processDetailTask(ctx, target, label) {
   await store.log('error', `${label} gave up — ${lastError}`);
 }
 
+/**
+ * Ask the Etsy API for the same listing and merge what it returns.
+ *
+ * Silent no-op without a configured key. A key that Etsy rejects (401/403)
+ * disables the API for the rest of the run after one warning, rather than
+ * repeating a doomed request for every listing.
+ */
+async function enrichFromApi(ctx, record, label) {
+  const { settings } = ctx;
+  if (!settings.etsyApiKey || ctx.apiDisabled || !record || !record.listingId) {
+    return mergeApiRecord(record, null);
+  }
+
+  // Keep comfortably inside Etsy's published rate limit.
+  const since = Date.now() - ctx.lastApiCallAt;
+  if (since < API_RATE.minIntervalMs) await sleep(API_RATE.minIntervalMs - since);
+  ctx.lastApiCallAt = Date.now();
+
+  const res = await fetchListingFromApi(record.listingId, settings.etsyApiKey, {
+    signal: ctx.signal,
+  });
+
+  if (res.ok) {
+    ctx.apiHits += 1;
+    return mergeApiRecord(record, res.record);
+  }
+
+  if (res.fatal) {
+    ctx.apiDisabled = true;
+    await store.log('error',
+      `Etsy API disabled for this run — ${res.error}. Check the keystring at `
+      + 'etsy.com/developers/your-apps; the scrape continues without it '
+      + '(tags fall back to the page-link proxy).');
+  } else {
+    ctx.apiMisses += 1;
+    await store.log('warn', `${label}: API lookup failed (${res.error}); using scraped values.`);
+  }
+  return mergeApiRecord(record, null);
+}
+
 /** Compact log summary: the signals worth eyeballing while a run happens. */
 function describeDetail(d) {
   const bits = [];
@@ -563,6 +618,9 @@ function describeDetail(d) {
   if (d.cartCount) bits.push(`${d.cartCount} in cart`);
   if (d.quantityAvailable !== null && d.quantityAvailable !== undefined) bits.push(`qty ${d.quantityAvailable}`);
   if (d.description) bits.push(`${d.description.length} chars desc`);
+  if (d.tags && d.tags.length) {
+    bits.push(`${d.tags.length} tags${d.tagSource === 'api' ? ' (API)' : ''}`);
+  }
   if (d.opportunityScore !== null && d.opportunityScore !== undefined) bits.push(`opp ${d.opportunityScore}`);
   const missing = missingDetailFields(d);
   if (missing.length) bits.push(`no ${missing.join('/')}`);

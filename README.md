@@ -230,7 +230,37 @@ redesigns. Where a page renders a collapsed teaser plus the full text, the longe
 one wins.
 
 | `viewsCount` | Etsy removed public view counters years ago. The column exists and stays `null` unless a page genuinely exposes one — it is never inferred from something else. |
-| `tags` (the 13) | Not rendered verbatim anywhere in the page. We harvest both link shapes that mirror them — `/market/<term>` links and the tag-style `/search?q=<term>` chips under "Explore related searches" — dedupe case-insensitively and cap at 13 (Etsy's own limit). `tagCount` tells you how many were actually recovered, so a listing showing `tagCount: 6` is not claiming to have found all 13. Treat as a close proxy, not the literal tag list. |
+### Getting the real 13 tags
+
+Etsy never renders a listing's tags verbatim in the page, so scraping alone can
+only recover a proxy for them. The tags *are* available from Etsy's Open API v3,
+for any active listing, with nothing but an application keystring — only
+write/private endpoints need OAuth, so no shop ownership is involved
+([request standards](https://developers.etsy.com/documentation/essentials/requests),
+[authentication](https://developers.etsy.com/documentation/essentials/authentication)).
+
+1. Get a free key at [etsy.com/developers/register](https://www.etsy.com/developers/register)
+2. Paste it into **Deep listing intelligence -> Etsy API key**
+3. Run a deep scrape
+
+Each listing then also gets `GET /v3/application/listings/{id}?includes=Shop`,
+which supplies the **exact tag array**, plus an authoritative `description`,
+`favoritesCount`, `viewsCount` (yes — the API exposes what the page hides),
+`quantityAvailable`, `materials`, and `shopTotalSales` from the shop include.
+
+Provenance is explicit: **`tagSource`** is `api` for the real tag set and
+`page-links` for the scraped proxy, so a partial harvest can never be mistaken
+for the full 13. Page-only signals the API does not carry (cart count, star
+seller, shop location and age, review text) keep their scraped values, so the API
+is purely additive.
+
+The key is stored locally, sent only to `api.etsy.com`, and never written to the
+activity log. `api.etsy.com` is an *optional* host permission, requested the
+first time you run with a key set. A key Etsy rejects disables the API for the
+rest of that run after one clear error rather than failing every listing, and the
+scrape continues without it.
+
+| `tags` (the 13) | Not rendered verbatim anywhere in the page, so **without an API key** we harvest both link shapes that mirror them — `/market/<term>` links and the tag-style `/search?q=<term>` chips under "Explore related searches" — dedupe case-insensitively and cap at 13 (Etsy's own limit). `tagCount` tells you how many were actually recovered, so a listing showing `tagCount: 6` is not claiming to have found all 13. Treat as a close proxy, not the literal tag list. |
 | sales per listing | Only *shop* totals are public (`shopTotalSales`). Per-listing sales are not, so `reviewsPerDay` and `cartCount` are the honest proxies for conversion. |
 | reviews beyond page 1 | Deeper review pages load through an undocumented internal endpoint. We parse the reviews the page actually renders (typically the first page) rather than depending on private API shapes. |
 
@@ -334,12 +364,12 @@ working meanwhile — that is why it is the primary strategy.
 ## Tests
 
 ```bash
-bash tools/run-checks.sh          # 157 checks, no network and no npm install
+bash tools/run-checks.sh          # 164 checks, no network and no npm install
 ```
 
 | Check | Covers |
 |---|---|
-| `tests/verify.mjs` (77) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
+| `tests/verify.mjs` (84) | URL building incl. the `is_best_seller`/`free_shipping`/`explicit` facets, price/currency/URL normalisation, JSON-LD extraction (search + listing pages), merge rules, block detection, settings clamping, scheduler round-robin + early stop, dedupe modes, ad exclusion, **trend metrics** (deltas, rate windows, lifetime rates, score bounds, null-vs-zero semantics), CSV/JSON/JSONL/XLSX serialisation and multi-sheet workbooks |
 | `tools/check-xlsx.py` (17) | Opens both generated workbooks with Python's `zipfile`/`ElementTree`: CRC-32 of every entry, mandatory OPC parts, header row, frozen pane, autofilter, one sheet per dataset with working relationships, and flattened nested values |
 | `tests/dom-check.mjs` (33) | The DOM parsers and both injected content scripts running in **real headless Chrome** against fixtures: search cards (sponsored/bestseller/free-shipping flags, EUR decimal commas, `srcset`, JSON-LD↔DOM merge), the data-quality regressions (price never reported as a rating, shop-name prefixes, shop-level review counts, badge false positives), and listing pages (favourites, cart count, stock, variations, personalisation, materials, tag harvesting and the 13-tag cap, free shipping vs. conditional promos, shop authority incl. member-since year validation, reviews with photos, review caps), plus challenge detection |
 | `tests/extension-check.mjs` (30) | Manifest/permission/import/asset integrity (including "no dynamic `import()` in worker code", which service workers reject at runtime), then the **extension actually loaded in Chrome**: service worker registers, UI boots from stored settings, message round-trips for settings/state/results/details/reviews, input validation and clamping, filter and deep-scrape options persisting through the worker, dataset picker re-rendering the preview, offscreen document parsing both page types, multi-sheet workbook generation, and a full run driven to completion |
