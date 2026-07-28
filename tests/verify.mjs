@@ -1482,7 +1482,7 @@ await test('XLSX escapes XML metacharacters in values', () => {
 
 group('Deep-scrape exports');
 
-const { toWorkbook, DATASET_FIELDS, ALL_DATASETS, exportDataset } = await import(path.join(ext, 'src/ui/export.js'));
+const { toWorkbook, DATASET_FIELDS, ALL_DATASETS, joinEverything, exportDataset } = await import(path.join(ext, 'src/ui/export.js'));
 
 const detailRow = {
   listingId: '1544102938',
@@ -1562,15 +1562,75 @@ await test('"All datasets" is defined as every table, so adding one cannot be fo
     assert.ok(Array.isArray(DATASET_FIELDS[dataset]) && DATASET_FIELDS[dataset].length,
       `${dataset} needs an export schema`);
   }
-  assert.deepEqual(ALL_DATASETS, ['search', 'details', 'reviews', 'history', 'log']);
+  assert.deepEqual(ALL_DATASETS,
+    ['combined', 'search', 'details', 'reviews', 'history', 'log']);
 });
 
 await test('workbook skips datasets with no rows', async () => {
+  // Search rows alone still produce the joined view, since joining is what makes
+  // one readable table out of the two halves — so two sheets, not one.
   const blob = toWorkbook({ search: sampleRows, details: [], reviews: [] });
   const xml = new TextDecoder().decode(new Uint8Array(await blob.arrayBuffer()));
   assert.ok(xml.includes('sheet1.xml'));
-  assert.ok(!xml.includes('sheet2.xml'));
+  assert.ok(xml.includes('sheet2.xml'));
+  assert.ok(!xml.includes('sheet3.xml'), 'no reviews, history or log sheets');
   assert.throws(() => toWorkbook({ search: [], details: [], reviews: [] }), /Nothing to export/);
+});
+
+await test('the joined view puts the grid and the listing page on one row', () => {
+  const search = [
+    { listingId: '1', query: 'planner', page: 1, position: 3, title: 'Grid title',
+      price: 7.25, reviewCount: 44, sponsored: true, image: 'img.jpg' },
+    { listingId: '2', query: 'planner', page: 1, position: 4, title: 'Never opened' },
+  ];
+  const details = [
+    { listingId: '1', title: 'Listing page title', tags: ['a', 'b'], tagCount: 2,
+      favoritesCount: 331, reviewCount: null, shopTotalSales: 18072 },
+  ];
+  const joined = joinEverything(search, details);
+
+  assert.equal(joined.length, 2, 'one row per search row');
+  const [first, second] = joined;
+
+  // Grid-only context survives.
+  assert.equal(first.query, 'planner');
+  assert.equal(first.position, 3);
+  assert.equal(first.sponsored, true);
+  assert.equal(first.image, 'img.jpg');
+  // Listing-page fields arrive on the same row.
+  assert.deepEqual(first.tags, ['a', 'b']);
+  assert.equal(first.favoritesCount, 331);
+  assert.equal(first.shopTotalSales, 18072);
+  // The listing page wins on a genuine disagreement…
+  assert.equal(first.title, 'Listing page title');
+  // …but its null never erases what the grid did have.
+  assert.equal(first.reviewCount, 44, 'a detail null must not blank a grid value');
+  assert.equal(first.deepScraped, true);
+
+  assert.equal(second.deepScraped, false, 'never opened, so the detail half is empty');
+  assert.equal(second.tags, null);
+  assert.equal(second.position, 4, 'and its grid context is still there');
+});
+
+await test('the join keeps a listing that ranked under several queries', () => {
+  // The same listing at different positions under different keywords is several
+  // facts, not one, so collapsing to one row per listing would lose data.
+  const search = [
+    { listingId: '9', query: 'a', position: 1 },
+    { listingId: '9', query: 'b', position: 7 },
+  ];
+  const joined = joinEverything(search, [{ listingId: '9', tags: ['t'] }]);
+  assert.equal(joined.length, 2);
+  assert.deepEqual(joined.map((r) => r.query), ['a', 'b']);
+  assert.ok(joined.every((r) => r.deepScraped && r.tags.length === 1),
+    'both rows carry the detail data');
+});
+
+await test('a deep-scraped listing missing from the grid is still exported', () => {
+  const joined = joinEverything([], [{ listingId: '5', tags: ['x'], favoritesCount: 2 }]);
+  assert.equal(joined.length, 1, 'appended rather than dropped');
+  assert.equal(joined[0].query, null, 'with no grid context to report');
+  assert.equal(joined[0].deepScraped, true);
 });
 
 await test('sheet names are sanitised for Excel', () => {

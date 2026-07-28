@@ -206,8 +206,32 @@ export const DATASETS = {
   // derived from, and the log holds the per-listing gap reporting.
   history: 'history',
   log: 'log',
+  // Search rows and their listing details on one line. Six fields live only on
+  // the grid (query, page, position, image, bestseller, sponsored) and 74 only on
+  // the listing page, so answering "what do I know about this listing" meant
+  // joining two tables on listingId by hand.
+  combined: 'combined',
   all: 'all',
 };
+
+/**
+ * The joined schema: grid context first, then everything the listing page added.
+ *
+ * `deepScraped` says whether the detail half is real, so an empty `tags` on a
+ * listing that was never opened is distinguishable from one that was opened and
+ * genuinely had none.
+ */
+export const COMBINED_FIELDS = (() => {
+  const seen = new Set();
+  const out = [];
+  for (const field of [...FIELDS, ...DETAIL_FIELDS]) {
+    if (seen.has(field)) continue;
+    seen.add(field);
+    out.push(field);
+  }
+  out.push('deepScraped');
+  return out;
+})();
 
 /** One row per observation of one listing — the raw trend series. */
 export const SNAPSHOT_FIELDS = [

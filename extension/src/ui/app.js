@@ -4,7 +4,7 @@
  */
 
 import { MSG, RUN_STATUS, DEFAULTS, DATASETS } from '../common/constants.js';
-import { exportDataset, pickFields, DATASET_FIELDS } from './export.js';
+import { exportDataset, pickFields, DATASET_FIELDS, joinEverything } from './export.js';
 
 const PREVIEW_LIMIT = 200;
 
@@ -87,6 +87,19 @@ const PREVIEW_COLUMNS = {
     ['Reviewer', '', (r) => r.reviewer],
     ['Comment', '', (r) => r.comment],
     ['Photos', 'num', (r) => fmtOrDash(r.photoCount)],
+  ],
+  // The joined view: grid context, then the fields the listing page added.
+  [DATASETS.combined]: [
+    ['#', 'num', (r) => r.position],
+    ['Query', '', (r) => r.query],
+    ['Title', 'link', (r) => r],
+    ['Price', 'num', (r) => formatPrice(r)],
+    ['Deep', 'num', (r) => (r.deepScraped ? 'yes' : '—')],
+    ['Tags', 'tags', (r) => r],
+    ['Favs', 'num', (r) => fmtOrDash(r.favoritesCount)],
+    ['Reviews', 'num', (r) => fmtOrDash(r.reviewCount)],
+    ['Shop sales', 'num', (r) => fmtOrDash(r.shopTotalSales)],
+    ['Opp', 'num', (r) => fmtOrDash(r.opportunityScore)],
   ],
   [DATASETS.history]: [
     ['Listing', 'num', (r) => r.listingId],
@@ -453,7 +466,18 @@ async function fetchLogRows(limit) {
   return { total: rows.length, rows: limit > 0 ? rows.slice(-limit) : rows };
 }
 
+/** The joined view is derived here rather than stored. */
+async function fetchCombinedRows(limit) {
+  const [search, details] = await Promise.all([
+    fetchDataset(DATASETS.search),
+    fetchDataset(DATASETS.details),
+  ]);
+  const rows = joinEverything(search.rows, details.rows);
+  return { total: rows.length, rows: limit > 0 ? rows.slice(0, limit) : rows };
+}
+
 async function fetchDataset(dataset, limit) {
+  if (dataset === DATASETS.combined) return fetchCombinedRows(limit);
   if (dataset === DATASETS.log) return fetchLogRows(limit);
   const type = MSG_FOR_DATASET[dataset];
   if (!type) return { rows: [], total: 0 };

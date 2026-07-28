@@ -264,8 +264,32 @@ which columns exist**:
 | `history` — Snapshot history | One row per observation of one listing: `observedAt`, favourites, reviewCount, price, quantity. This is the raw series every velocity figure is derived from, it spans runs, and `Clear` keeps it | — |
 | `log` — Run log | One row per log entry: timestamp, level, message. The per-listing gap reporting and the tag-route diagnosis, after the fact | — |
 
-**All datasets** contains all five: Excel gets one sheet each, JSON gets one key
-each plus a `run` summary (status, queries, counts, timings). The list of tables
+Plus one derived table:
+
+| Dataset | Contains |
+|---|---|
+| `combined` — **Everything joined** | One row per search row carrying *every* field from both halves: the grid's `query`/`page`/`position`/`image`/`bestseller`/`sponsored` **and** all 74 listing-page fields — tags, description, favourites, shop authority, trend metrics. Plus `deepScraped`, so an empty `tags` on a listing that was never opened is distinguishable from one that was opened and had none. |
+
+This is the sheet to read. Six fields exist only on the grid and 74 only on the
+listing page, so before it, answering "what do I know about this listing" meant
+joining two tables on `listingId` yourself.
+
+Three rules make the join safe to trust:
+
+- **The grid's multiplicity is kept.** A listing that ranked under three keywords
+  stays three rows, because its position under each is a separate fact.
+- **The listing page wins a genuine disagreement** — it states the listing's own
+  figures, while the grid is a summary card.
+- **But a `null` from the listing page never overwrites a value the grid had**, so
+  the join can only ever add information. A card that printed `(44)` keeps 44 even
+  if the listing page did not state a count.
+
+Listings that were deep-scraped but never appeared in the grid are appended with
+no grid context rather than dropped.
+
+**All datasets** contains all six: Excel gets one sheet each — with `Everything
+joined` first — and JSON gets one key each plus a `run` summary (status, queries,
+counts, timings). The list of tables
 is defined once, in `ALL_DATASETS`, so a dataset cannot be previewable on its own
 while quietly missing from the export named "everything" — which is exactly what
 had happened to `history` and `log`. The API key is never written to an export.

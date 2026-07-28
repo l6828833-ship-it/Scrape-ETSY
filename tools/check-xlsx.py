@@ -90,7 +90,11 @@ if workbook_path.exists():
         # All five tables a run produces. "Snapshot history" and "Run log" were
         # recorded and then unreachable, so an "everything" export was missing
         # the trend series every velocity figure is derived from.
+        # "Everything joined" leads: it is the grid and the listing page on one
+        # row, which is the sheet most people actually read. The source tables
+        # follow, then the record of how the data was obtained.
         EXPECTED_SHEETS = [
+            "Everything joined",
             "Search rows",
             "Listing details",
             "Reviews",
@@ -113,7 +117,12 @@ if workbook_path.exists():
         check("all worksheet parts are present",
               all(f"xl/worksheets/sheet{i}.xml" in zf.namelist() for i in sheet_numbers))
 
-        detail_sheet = ET.fromstring(zf.read("xl/worksheets/sheet2.xml"))
+        # Located by name, not by index. Hardcoding sheet2 meant that inserting a
+        # sheet ahead of it silently repointed these checks at a different table,
+        # where every column they look for is legitimately absent — so they failed
+        # while reporting nothing about what actually changed.
+        detail_index = names.index("Listing details") + 1
+        detail_sheet = ET.fromstring(zf.read(f"xl/worksheets/sheet{detail_index}.xml"))
         detail_rows = detail_sheet.findall(".//s:sheetData/s:row", NS)
         check("listing-details sheet has data", len(detail_rows) >= 2, f"{len(detail_rows)} row(s)")
 
