@@ -682,6 +682,25 @@ try {
       assert.equal(r.shopName, 'ClassroomPrintables');
     });
 
+    await test('a review count rendered beside the stars, not inside them, is found', () => {
+      // The gap that left reviewCount null on most rows of a live run: the count
+      // was only ever searched for inside the star wrapper, and Etsy renders it
+      // as that wrapper's sibling.
+      const r = byId['9010'];
+      assert.equal(r.rating, 5);
+      assert.equal(r.reviewCount, 8, 'the "(8)" beside the stars is the count');
+      assert.equal(r.price, 7.25);
+      assert.equal(r.isDigital, true);
+    });
+
+    await test('widening the search did not weaken the ambiguity rule', () => {
+      // Two parenthesised numbers in the card, so there is no way to tell which
+      // is the review count. Declining is still the right answer.
+      const r = byId['9011'];
+      assert.equal(r.rating, 4.6, 'the rating is still read');
+      assert.equal(r.reviewCount, null, 'two candidates means no count, not a guess');
+    });
+
     await test('a "reviews" label outside the rating widget is ignored', async () => {
       // Only rating-scoped labels are read. A shop-wide link labelled "8,214
       // reviews" is exactly the leak that once gave every listing from one shop
