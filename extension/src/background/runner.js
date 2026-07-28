@@ -11,6 +11,7 @@ import { scrapeInTab, scrapeExistingTab } from './tab-engine.js';
 import { parseHtmlOffscreen, offscreenAvailable, closeOffscreen } from './offscreen.js';
 import { buildListingUrl, fetchDetailViaFetch, fetchDetailViaTab } from './detail-engine.js';
 import { fetchListingFromApi, mergeApiRecord, API_RATE } from '../common/etsy-api.js';
+import { upgradeModeForVisibility, closeScrapeSurface } from './tabs.js';
 import * as history from './history.js';
 import * as store from './store.js';
 import * as proxy from './proxy.js';
@@ -204,6 +205,10 @@ export async function startRun(rawSettings) {
     /** How often each key deep-scrape field came back empty. */
     detailGaps: {},
     detailsCaptured: 0,
+    /** Where scraped pages open; may be upgraded below for visibility. */
+    tabMode: settings.tabMode,
+    /** EHunt panel bookkeeping. */
+    ehuntHits: 0,
     /** Search-row coverage, so a rotted card selector is announced. */
     rowGaps: {},
     rowsSeen: 0,
@@ -302,6 +307,8 @@ async function finishRun(ctx) {
     await proxy.clearProxyConfiguration();
     await store.log('info', 'Proxy settings restored to system default.');
   }
+  // Always tidy up the scraping window, including on abort or error.
+  if (!ctx.settings.keepTabsOpen) await closeScrapeSurface();
   await store.setActive([]);
   const deep = p.detailsPlanned
     ? ` ${p.detailsDone - p.detailsFailed}/${p.detailsPlanned} listing detail(s), ${p.reviews} review(s).`
@@ -512,6 +519,22 @@ async function detailPhase(ctx) {
     + `, concurrency=${settings.detailConcurrency}`
     + `${settings.scrapeReviews ? `, up to ${settings.maxReviewsPerListing} reviews each` : ', reviews off'}`);
 
+  if (settings.useEhuntPanel) {
+    // A hidden background tab reports visibilityState 'hidden', and EHunt (like
+    // many panels) waits for the page to be visible before rendering. Move to a
+    // separate unfocused window, whose active tab does count as visible.
+    const upgraded = upgradeModeForVisibility(ctx.tabMode, true);
+    if (upgraded) {
+      ctx.tabMode = upgraded;
+      await store.log('info',
+        'EHunt needs a visible page, so listings open in a separate scraping window '
+        + '(your window keeps focus). It closes when the run ends.');
+    }
+    if (settings.engine !== ENGINES.TAB) {
+      await store.log('info', 'Deep scrape uses real tabs because the EHunt panel is enabled.');
+    }
+  }
+
   if (!offscreenAvailable() && settings.engine === ENGINES.FETCH) {
     await store.log('warn',
       'No offscreen document available: detail records will carry JSON-LD fields only '
@@ -555,6 +578,17 @@ async function detailPhase(ctx) {
 
   await Promise.all(workers);
   await history.persistNow();
+  if (settings.useEhuntPanel) {
+    if (ctx.ehuntHits) {
+      await store.log('success',
+        `EHunt panel read on ${ctx.ehuntHits}/${ctx.detailsCaptured} listing(s) — tags from EHunt.`);
+    } else {
+      await store.log('warn',
+        'EHunt panel never appeared on any listing. Check that the EHunt extension is '
+        + 'installed and enabled, that it is allowed to run in all windows, and try '
+        + 'raising the EHunt wait time. Tags fall back to the page-link proxy.');
+    }
+  }
   if (settings.etsyApiKey && !ctx.apiDisabled) {
     await store.log(ctx.apiHits ? 'success' : 'warn',
       `Etsy API enriched ${ctx.apiHits}/${ctx.detailsCaptured} listing(s)`
@@ -596,7 +630,12 @@ async function processDetailTask(ctx, target, label) {
 
     // Reviews and favourites only exist in the rendered DOM, so a fetch without
     // an offscreen parser is upgraded to a tab automatically.
+    // Reading the EHunt panel requires a rendered page, so the deep scrape has to
+    // use a real tab regardless of the configured engine. Without this the
+    // "Read the EHunt panel" option silently did nothing on the default engine,
+    // because `fetch()` returns HTML that no other extension has touched.
     const useTab = settings.engine === ENGINES.TAB
+      || settings.useEhuntPanel
       || ctx.detailEscalated
       || attempt > 0
       || (settings.engine === ENGINES.HYBRID && !offscreenAvailable());
@@ -612,6 +651,8 @@ async function processDetailTask(ctx, target, label) {
         signal: ctx.signal,
         context,
         keepTabsOpen: settings.keepTabsOpen,
+        tabMode: ctx.tabMode,
+        tuning: { ehuntTimeoutMs: settings.ehuntWaitMs },
       })
       : await fetchDetailViaFetch(url, {
         signal: ctx.signal,
@@ -620,6 +661,7 @@ async function processDetailTask(ctx, target, label) {
       });
 
     if (outcome.aborted || ctx.signal.aborted) return;
+    if (outcome.ehuntFound) ctx.ehuntHits += 1;
 
     if (outcome.blocked) {
       await store.bumpProgress({ blocks: 1 });
@@ -849,6 +891,7 @@ async function runTabAttempt(ctx, url, context, label) {
     context,
     keepTabsOpen: ctx.settings.keepTabsOpen,
     manualCaptchaSolve: ctx.settings.manualCaptchaSolve,
+    tabMode: ctx.tabMode,
     onNotice: (level, msg) => { void store.log(level, msg); },
   });
   if (ctx.signal.aborted) return { aborted: true };

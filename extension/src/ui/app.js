@@ -39,6 +39,8 @@ const FIELD_BINDINGS = [
   ['stopOnEmptyPage', 'stopOnEmptyPage', 'bool'],
   ['manualCaptchaSolve', 'manualCaptchaSolve', 'bool'],
   ['keepTabsOpen', 'keepTabsOpen', 'bool'],
+  ['tabMode', 'tabMode', 'text'],
+  ['ehuntWaitMs', 'ehuntWaitMs', 'int'],
 ];
 
 /** Preview table shape per dataset: [header, className, accessor]. */

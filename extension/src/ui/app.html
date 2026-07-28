@@ -143,6 +143,11 @@
               <code>tagSource</code> records which path produced each row.
             </p>
           </fieldset>
+          <label class="field narrow">
+            <span class="label">EHunt wait (ms)</span>
+            <input id="ehuntWaitMs" type="number" min="0" max="60000" step="500" />
+          </label>
+
           <p class="warn" id="deepCost">
             Each listing is one extra page request, so this phase is the slow one. Velocity fields
             stay <code>null</code> until the same listing has been seen twice, at least 6 hours apart.
@@ -192,6 +197,19 @@
           <label class="check">
             <input id="manualCaptchaSolve" type="checkbox" />
             <span>On a challenge page, focus the tab so I can solve it</span>
+          </label>
+          <label class="field">
+            <span class="label">Open pages in</span>
+            <select id="tabMode">
+              <option value="window">A separate window (visible, keeps your focus)</option>
+              <option value="background">A hidden background tab (fastest)</option>
+              <option value="foreground">A tab in this window (watch it work)</option>
+            </select>
+            <span class="hint">
+              Hidden tabs report <code>visibilityState: "hidden"</code>, and panels from other
+              extensions (EHunt) do not render in them. The separate window is unfocused but
+              visible, and closes when the run ends.
+            </span>
           </label>
           <label class="check">
             <input id="keepTabsOpen" type="checkbox" />

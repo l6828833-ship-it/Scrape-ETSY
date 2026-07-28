@@ -94,6 +94,8 @@ export function normalizeSettings(input) {
   s.maxDetailListings = clampInt(s.maxDetailListings, 1, LIMITS.maxDetailListings, DEFAULTS.maxDetailListings);
   s.detailConcurrency = clampInt(s.detailConcurrency, 1, LIMITS.maxDetailConcurrency, DEFAULTS.detailConcurrency);
   s.maxReviewsPerListing = clampInt(s.maxReviewsPerListing, 0, LIMITS.maxReviewsPerListing, DEFAULTS.maxReviewsPerListing);
+  s.ehuntWaitMs = clampInt(s.ehuntWaitMs, 0, 60000, DEFAULTS.ehuntWaitMs);
+  s.tabMode = ['background', 'window', 'foreground'].includes(s.tabMode) ? s.tabMode : DEFAULTS.tabMode;
   s.dedupe = ['off', 'per_query', 'global'].includes(s.dedupe) ? s.dedupe : DEFAULTS.dedupe;
   s.engine = ['fetch', 'tab', 'hybrid'].includes(s.engine) ? s.engine : DEFAULTS.engine;
   s.minPrice = toNumOrNull(s.minPrice);
