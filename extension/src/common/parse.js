@@ -401,17 +401,9 @@
       ? (shopEl.getAttribute && shopEl.getAttribute('data-shop-name')) || text(shopEl)
       : null;
 
-    // Rating comes ONLY from an element that states it is a rating.
-    //
-    // There used to be a third fallback here that read the first
-    // `.wt-text-title-01` in the card and accepted any value in 0-5. On the live
-    // grid that class is the *price*, so every listing under $5 silently
-    // reported its price as its star rating (a $2.59 PDF "rated 2.59"), while
-    // anything over $5 reported null. Prices and ratings are both small decimals
-    // in this category, so no amount of range checking can tell them apart —
-    // the only safe rule is to require an explicit rating source and otherwise
-    // return null.
-    const rating = readRating(el);
+    // Rating must come from something that identifies itself as a rating, and
+    // must not simply be the price wearing the same CSS class (see readRating).
+    const rating = readRating(el, price);
     const reviewCount = readReviewCount(el, rating !== null);
 
     return {
@@ -428,32 +420,68 @@
       bestseller: hasBadge(el, BESTSELLER_BADGE),
       // Tri-state on purpose: Etsy labels digital items, but says nothing at all
       // for physical ones, so "no label" is unknown rather than proof of physical.
-      isDigital: hasBadge(el, DIGITAL_BADGE) ? true : null,
+      isDigital: readIsDigital(el, blob),
       sponsored: detectSponsored(el, blob),
       position: index + 1,
       _source: 'dom',
     };
   }
 
-  /** Elements that genuinely declare a star rating, in order of trust. */
-  function readRating(el) {
+  /** Elements whose class/attributes declare they are about a star rating. */
+  const RATING_CONTEXT = [
+    'input[name="rating"]',
+    '[aria-label*="out of 5"]', '[title*="out of 5"]',
+    '[class*="rating" i]', '[class*="stars" i]', '[data-rating]',
+    '[data-stars]', '[aria-label*="star" i]',
+  ];
+
+  /**
+   * Read a star rating, in descending order of trust.
+   *
+   * The bug this guards against: an earlier version accepted the first
+   * `.wt-text-title-01` number in 0-5, but on the live grid that class is the
+   * *price*, so every listing under $5 reported its price as its rating (a $2.59
+   * PDF "rated 2.59"). Requiring explicit sources fixed that but returned null
+   * for every row on live pages, because Etsy's real markup does not always use
+   * a rating input or an "out of 5" label.
+   *
+   * The rule now: a bare number counts only if it lives in an element that
+   * declares itself rating-related AND differs from the card's price. That keeps
+   * the two apart without throwing the rating away.
+   *
+   * @param {?number} price the card's parsed price, used purely as an exclusion
+   */
+  function readRating(el, price) {
     const input = firstMatch(el, SELECTORS.ratingInput);
     if (input) {
       const value = clampRating(parsePrice(input.getAttribute('value')));
       if (value !== null) return value;
     }
-    // Screen-reader / aria text: "4.8 out of 5 stars".
-    const labelled = allMatches(el, ['[aria-label*="out of 5"]', '[title*="out of 5"]']);
-    for (const node of labelled) {
-      const label = (node.getAttribute('aria-label') || node.getAttribute('title') || '');
+
+    // "4.8 out of 5 stars" in aria-label, title, or screen-reader text.
+    for (const node of allMatches(el, ['[aria-label*="out of 5"]', '[title*="out of 5"]'])) {
+      const label = node.getAttribute('aria-label') || node.getAttribute('title') || '';
       const m = label.match(/([0-5](?:[.,]\d+)?)\s*out of 5/i);
       if (m) {
         const value = clampRating(parsePrice(m[1]));
         if (value !== null) return value;
       }
     }
-    const m = text(el).match(/([0-5](?:[.,]\d+)?)\s*out of 5(?:\s*stars?)?/i);
-    return m ? clampRating(parsePrice(m[1])) : null;
+    const srMatch = text(el).match(/([0-5](?:[.,]\d+)?)\s*out of 5(?:\s*stars?)?/i);
+    if (srMatch) {
+      const value = clampRating(parsePrice(srMatch[1]));
+      if (value !== null) return value;
+    }
+
+    // A number inside a rating/stars element. Never accepted when it equals the
+    // price, because that is exactly the collision described above.
+    for (const node of allMatches(el, RATING_CONTEXT)) {
+      const value = clampRating(parsePrice(text(node) || node.getAttribute('value')));
+      if (value === null) continue;
+      if (price !== null && price !== undefined && Math.abs(value - price) < 1e-9) continue;
+      return value;
+    }
+    return null;
   }
 
   function clampRating(value) {
@@ -471,7 +499,17 @@
   function readReviewCount(el, hasRating) {
     const explicit = text(el).match(/([\d.,]+)\s*(?:reviews?|ratings?)\b/i);
     if (explicit) return toNumber(explicit[1]);
-    if (!hasRating) return null;
+
+    if (!hasRating) {
+      // No stars found. A single "(1,204)" in the card is still the listing's
+      // review count — Etsy renders exactly one. Two or more means we cannot
+      // tell which is the listing's, so we decline rather than guess (that
+      // ambiguity is how shop-level totals leaked in before).
+      const tokens = text(el).match(/\((\d[\d.,\s]*)\)/g) || [];
+      if (tokens.length !== 1) return null;
+      const only = tokens[0].match(/\((\d[\d.,\s]*)\)/);
+      return only ? toNumber(only[1]) : null;
+    }
 
     const container = ratingContainer(el);
     const scope = container || el;
@@ -504,6 +542,22 @@
   const CONDITIONAL_SHIPPING = /orders? over|when you spend|on orders of/i;
   const BESTSELLER_BADGE = /^best\s?seller\b/i;
   const DIGITAL_BADGE = /^(?:digital\s+(?:download|file)|instant\s+download)\b/i;
+  const DIGITAL_TEXT = /digital download|instant download|digital file|digital item/i;
+
+  /**
+   * Digital vs unknown, tri-state.
+   *
+   * Badge-only matching proved far too strict on live pages: a strict run of
+   * "2026 calendar template" kept 12 of ~61 rows because Etsy does not always
+   * render the label as its own short element. The card text is checked too —
+   * these phrases do not appear incidentally on physical listings, so recall
+   * goes up without inviting false positives. Absence still means `null`
+   * (unknown), never `false`, because Etsy says nothing for physical items.
+   */
+  function readIsDigital(el, blob) {
+    if (hasBadge(el, DIGITAL_BADGE)) return true;
+    return DIGITAL_TEXT.test(blob) ? true : null;
+  }
 
   /**
    * Badges are their own short elements. Testing the whole card's text instead
@@ -542,6 +596,10 @@
       if (!t || t.length > 60) continue;
       if (/^\(|\)$|out of 5|free shipping|bestseller|ad by|from shop|star seller|\d+\+? sales/i.test(t)) continue;
       if (/^[$€£¥₹]/.test(t)) continue;
+      // A bare number is a rating or a count, never a shop name. (A live card
+      // put "4.8" in the same caption class the shop name uses.)
+      if (/^\d+([.,]\d+)?$/.test(t)) continue;
+      if (/digital download|instant download|digital file/i.test(t)) continue;
       const m = t.match(/^(?:from shop\s+)?(.+)$/i);
       return { textContent: m ? m[1] : t, getAttribute: () => null };
     }

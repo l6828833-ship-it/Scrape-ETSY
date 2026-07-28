@@ -204,6 +204,9 @@ export async function startRun(rawSettings) {
     /** How often each key deep-scrape field came back empty. */
     detailGaps: {},
     detailsCaptured: 0,
+    /** Search-row coverage, so a rotted card selector is announced. */
+    rowGaps: {},
+    rowsSeen: 0,
     /** Etsy API enrichment bookkeeping. */
     apiHits: 0,
     apiMisses: 0,
@@ -225,10 +228,76 @@ export async function startRun(rawSettings) {
   return promise;
 }
 
+/**
+ * Resolve review counts that cannot be trusted, using evidence a single card
+ * cannot provide.
+ *
+ * A bare "(1,482)" on a card with no stars is usually the listing's review
+ * count — but sometimes it is the shop's total, and the two are structurally
+ * identical inside one card. The giveaway is cross-row: in a real run, `144`
+ * appeared on all three listings from one shop, `109` on all three from
+ * another. So when the same count repeats across multiple listings from the same
+ * shop and none of those rows had a star rating, it is a shop total and gets
+ * cleared. Rows with a rating are left alone — their count sits next to the
+ * stars and is trustworthy.
+ *
+ * @returns {number} how many counts were cleared
+ */
+export function resolveAmbiguousReviewCounts(records) {
+  const groups = new Map();
+  for (const row of records) {
+    if (!row || row.rating !== null || row.reviewCount === null || row.reviewCount === undefined) continue;
+    if (!row.shopName) continue;
+    const key = `${row.shopName}::${row.reviewCount}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  let cleared = 0;
+  for (const rows of groups.values()) {
+    if (rows.length < 2) continue;
+    for (const row of rows) {
+      row.reviewCount = null;
+      cleared += 1;
+    }
+  }
+  return cleared;
+}
+
+/**
+ * Search-card fields that are inferred from markup rather than structured data.
+ * If one is empty on every row, a selector has rotted — say so during the run.
+ */
+const WATCHED_ROW_FIELDS = [['rating', 'rating'], ['reviewCount', 'review count'],
+  ['shopName', 'shop name'], ['price', 'price']];
+
+function tallyRowGaps(ctx, rows) {
+  for (const row of rows) {
+    ctx.rowsSeen += 1;
+    for (const [field, label] of WATCHED_ROW_FIELDS) {
+      const v = row[field];
+      if (v === null || v === undefined || v === '') {
+        ctx.rowGaps[label] = (ctx.rowGaps[label] || 0) + 1;
+      }
+    }
+  }
+}
+
+async function reportRowCoverage(ctx) {
+  if (!ctx.rowsSeen) return;
+  const total = ctx.rowsSeen;
+  const empty = Object.entries(ctx.rowGaps).filter(([, n]) => n === total);
+  if (!empty.length) return;
+  await store.log('warn',
+    `Search rows: ${empty.map(([l]) => l).join(', ')} empty on all ${total} row(s) — `
+    + 'Etsy likely changed its card markup. Update SELECTORS in src/common/parse.js; '
+    + 'the deep scrape reads these from the listing page instead.');
+}
+
 async function finishRun(ctx) {
   const aborted = ctx.signal.aborted;
   const state = await store.getState();
   const p = state.progress;
+  await reportRowCoverage(ctx);
   if (ctx.settings.proxyConfiguration && ctx.settings.proxyConfiguration.enabled) {
     await proxy.clearProxyConfiguration();
     await store.log('info', 'Proxy settings restored to system default.');
@@ -386,6 +455,13 @@ async function processTask(ctx, task, label) {
     // Row-level filters run before de-duplication so the dupe count stays
     // meaningful, and after the empty-page check above so that a page made up
     // entirely of ads is not mistaken for the end of the results.
+    const ambiguous = resolveAmbiguousReviewCounts(records);
+    if (ambiguous) {
+      await store.log('info',
+        `${label}: cleared ${ambiguous} review count(s) repeated across one shop's `
+        + 'listings — that is a shop total, not per-listing.');
+    }
+    tallyRowGaps(ctx, records);
     const { rows: filtered, adsSkipped, nonDigitalSkipped } = applyRowFilters(records, settings);
     const { kept, duplicates } = ctx.dedupe.filter(filtered, task.query);
     for (const row of kept) {
@@ -824,5 +900,6 @@ export async function scrapeActiveTab() {
 }
 
 export const __testing = {
-  Scheduler, Dedupe, applyRowFilters, missingDetailFields, describeDetail, LIMITS,
+  Scheduler, Dedupe, applyRowFilters, missingDetailFields, describeDetail,
+  tallyRowGaps, WATCHED_ROW_FIELDS, resolveAmbiguousReviewCounts, LIMITS,
 };

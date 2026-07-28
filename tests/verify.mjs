@@ -652,6 +652,41 @@ await test('rows pass through untouched when the option is off', () => {
   assert.equal(runnerTesting.applyRowFilters(rows, undefined).rows.length, 2);
 });
 
+group('Review-count disambiguation (cross-row)');
+
+await test('a count repeated across one shop\'s listings is a shop total', () => {
+  // The real signal: 144 on all three GroundedGrowStudio listings in a live run.
+  const rows = [
+    { listingId: '1', shopName: 'GroundedGrowStudio', rating: null, reviewCount: 144 },
+    { listingId: '2', shopName: 'GroundedGrowStudio', rating: null, reviewCount: 144 },
+    { listingId: '3', shopName: 'GroundedGrowStudio', rating: null, reviewCount: 144 },
+    { listingId: '4', shopName: 'OtherShop', rating: null, reviewCount: 325 },
+  ];
+  const cleared = runnerTesting.resolveAmbiguousReviewCounts(rows);
+  assert.equal(cleared, 3);
+  assert.deepEqual(rows.slice(0, 3).map((r) => r.reviewCount), [null, null, null]);
+  assert.equal(rows[3].reviewCount, 325, 'a count seen once is kept');
+});
+
+await test('counts next to a star rating are always trusted', () => {
+  const rows = [
+    { shopName: 'Shop', rating: 4.9, reviewCount: 103 },
+    { shopName: 'Shop', rating: 4.9, reviewCount: 103 },
+  ];
+  assert.equal(runnerTesting.resolveAmbiguousReviewCounts(rows), 0,
+    'with stars present the count sits beside them and is reliable');
+  assert.equal(rows[0].reviewCount, 103);
+});
+
+await test('the same count from different shops is left alone', () => {
+  const rows = [
+    { shopName: 'A', rating: null, reviewCount: 44 },
+    { shopName: 'B', rating: null, reviewCount: 44 },
+  ];
+  assert.equal(runnerTesting.resolveAmbiguousReviewCounts(rows), 0,
+    'a coincidence across shops is not evidence of a shop total');
+});
+
 await test('digitalOnly keeps only listings Etsy labelled digital', () => {
   const rows = [
     { listingId: '1', isDigital: true },
