@@ -665,7 +665,7 @@ try {
     })()`);
     const out = JSON.parse(raw);
     assert.deepEqual(out.options,
-      ['search', 'details', 'reviews', 'history', 'log', 'all']);
+      ['search', 'details', 'reviews', 'combined', 'history', 'log', 'all']);
     assert.ok(out.headers.includes('Favs/day'), `detail columns expected, got ${out.headers}`);
     assert.ok(out.headers.includes('Opp'));
     assert.match(out.hint, /Deep listing intelligence/, 'empty state should explain itself');
@@ -737,8 +737,8 @@ try {
         haveLabels: ALL_DATASETS.every(d => typeof DATASET_LABELS[d] === 'string')
       });
     })()`));
-    assert.deepEqual(out.all, ['search', 'details', 'reviews', 'history', 'log'],
-      'history and log are part of "all" now');
+    assert.deepEqual(out.all, ['combined', 'search', 'details', 'reviews', 'history', 'log'],
+      'the joined view, both source tables, and the record of how they were obtained');
     assert.equal(out.haveFields, true, 'every dataset in "all" has an export schema');
     assert.equal(out.haveLabels, true, 'and a sheet name');
   });

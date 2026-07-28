@@ -9,7 +9,8 @@
  */
 
 import {
-  FIELDS, DETAIL_FIELDS, REVIEW_FIELDS, SNAPSHOT_FIELDS, LOG_FIELDS, DATASETS,
+  FIELDS, DETAIL_FIELDS, REVIEW_FIELDS, SNAPSHOT_FIELDS, LOG_FIELDS, COMBINED_FIELDS,
+  DATASETS,
 } from '../common/constants.js';
 import { rowsToXlsx, rowsToWorkbook } from './xlsx.js';
 
@@ -22,6 +23,7 @@ export const DATASET_FIELDS = {
   [DATASETS.reviews]: REVIEW_FIELDS,
   [DATASETS.history]: SNAPSHOT_FIELDS,
   [DATASETS.log]: LOG_FIELDS,
+  [DATASETS.combined]: COMBINED_FIELDS,
 };
 
 export const DATASET_LABELS = {
@@ -30,16 +32,85 @@ export const DATASET_LABELS = {
   [DATASETS.reviews]: 'Reviews',
   [DATASETS.history]: 'Snapshot history',
   [DATASETS.log]: 'Run log',
+  [DATASETS.combined]: 'Everything joined',
   [DATASETS.all]: 'All datasets',
 };
 
 /**
- * Every table "All datasets" covers, in the order they belong in a workbook:
- * the listings, their children, then the record of how they were obtained.
+ * Every table "All datasets" covers. The joined view leads, because it is the one
+ * most people actually want to read; the source tables follow, then the record of
+ * how the data was obtained.
  */
 export const ALL_DATASETS = [
+  DATASETS.combined,
   DATASETS.search, DATASETS.details, DATASETS.reviews, DATASETS.history, DATASETS.log,
 ];
+
+/**
+ * One row per search row, carrying everything the listing page added.
+ *
+ * Joined on `listingId`, keeping the grid's multiplicity: a listing that ranked
+ * under three queries stays three rows, because its position under each is a
+ * distinct fact. Listings that were deep-scraped but never appeared in the grid
+ * are appended with no grid context rather than dropped.
+ *
+ * Where the two sources hold the same field, the listing page wins — it states
+ * the listing's own figures, while the grid is a summary card. But a *null* from
+ * the listing page never overwrites a value the grid did have, so the join can
+ * only ever add information.
+ */
+export function joinEverything(searchRows, detailRows) {
+  const byId = new Map();
+  for (const detail of detailRows || []) {
+    if (detail && detail.listingId) byId.set(String(detail.listingId), detail);
+  }
+
+  const matched = new Set();
+  const out = [];
+  for (const row of searchRows || []) {
+    const id = row && row.listingId ? String(row.listingId) : null;
+    const detail = id ? byId.get(id) : null;
+    if (detail) matched.add(id);
+    out.push(combineRow(row, detail));
+  }
+  for (const [id, detail] of byId) {
+    if (!matched.has(id)) out.push(combineRow(null, detail));
+  }
+  return out;
+}
+
+function combineRow(searchRow, detail) {
+  const merged = {};
+  for (const field of COMBINED_FIELDS) merged[field] = null;
+
+  if (searchRow) {
+    for (const [key, value] of Object.entries(searchRow)) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+  if (detail) {
+    for (const [key, value] of Object.entries(detail)) {
+      // Skipping nulls is what makes the join additive: a listing page that did
+      // not state a review count cannot erase the count the grid printed.
+      if (value === null || value === undefined) continue;
+      merged[key] = value;
+    }
+  }
+  merged.deepScraped = Boolean(detail);
+  return merged;
+}
+
+/** Fill in the joined view when the caller did not supply one. */
+function withJoined(data) {
+  if (data && data[DATASETS.combined]) return data;
+  return {
+    ...data,
+    [DATASETS.combined]: joinEverything(
+      (data && data[DATASETS.search]) || [],
+      (data && data[DATASETS.details]) || [],
+    ),
+  };
+}
 
 /** Arrays/objects become spreadsheet-friendly scalars. */
 function flattenValue(value) {
@@ -133,7 +204,8 @@ export function toXlsx(rows, options = {}) {
  * suits this data, since reviews are a one-to-many child of listings.
  * @param {{search?:Array, details?:Array, reviews?:Array}} data
  */
-export function toWorkbook(data, options = {}) {
+export function toWorkbook(rawData, options = {}) {
+  const data = withJoined(rawData);
   const sheets = [];
   for (const dataset of ALL_DATASETS) {
     const rows = data[dataset];
@@ -194,6 +266,7 @@ const FILE_PREFIX = {
   [DATASETS.reviews]: 'etsy-reviews',
   [DATASETS.history]: 'etsy-history',
   [DATASETS.log]: 'etsy-run-log',
+  [DATASETS.combined]: 'etsy-everything',
   [DATASETS.all]: 'etsy-dataset',
 };
 
@@ -214,7 +287,11 @@ export async function exportRows(rows, format, options = {}) {
  */
 export async function exportDataset(dataset, format, data, options = {}) {
   if (dataset !== DATASETS.all) {
-    const rows = data[dataset] || [];
+    // The joined view is derived, so it can be exported on its own without the
+    // caller having to assemble it.
+    const rows = dataset === DATASETS.combined
+      ? withJoined(data)[DATASETS.combined]
+      : (data[dataset] || []);
     return exportRows(rows, format, {
       ...options,
       dataset,
@@ -228,6 +305,7 @@ export async function exportDataset(dataset, format, data, options = {}) {
     return downloadBlob(toWorkbook(data, options), timestampedName('xlsx', FILE_PREFIX[DATASETS.all]));
   }
   if (format === 'json') {
+    data = withJoined(data);
     const payload = { exportedAt: new Date().toISOString() };
     // The run's own account of itself, when the caller supplied it. Not a table,
     // so it has no sheet in the workbook, but JSON can carry it.
