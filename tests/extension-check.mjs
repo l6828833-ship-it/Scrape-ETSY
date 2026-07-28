@@ -721,11 +721,11 @@ try {
       });
     })()`);
     const out = JSON.parse(raw);
-    assert.equal(out.header, 'query,page,position,listingId,title,price,currency,shopName,image,url,rating,reviewCount,freeShipping,bestseller,sponsored,scrapedAt');
+    assert.equal(out.header, 'query,page,position,listingId,title,price,currency,shopName,image,url,rating,reviewCount,freeShipping,bestseller,sponsored,isDigital,scrapedAt');
     assert.equal(out.quoted, true, 'CSV quoting of embedded commas/quotes');
     assert.equal(out.zip, true, 'XLSX has the ZIP magic bytes');
     assert.ok(out.size > 1000, `xlsx too small: ${out.size}`);
-    assert.equal(out.keys.length, 16);
+    assert.equal(out.keys.length, 17, 'search schema: 16 original columns + isDigital');
   });
 
   await test('clearing results resets the store', async () => {

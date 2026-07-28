@@ -402,6 +402,79 @@ await test('dedupe per_query keeps the same listing across different queries', (
   assert.equal(b.kept.length, 1, 'other query gets its own namespace');
 });
 
+group('EHunt panel (numbers and merge rules)');
+
+await import(path.join(ext, 'src/common/ehunt-parse.js'));
+const EH = globalThis.EtsyEhunt;
+
+await test('parses compact numbers, percentages and N/A', () => {
+  assert.equal(EH.parseCompactNumber(' (14.8M) '), 14800000);
+  assert.equal(EH.parseCompactNumber('656.9K'), 656900);
+  assert.equal(EH.parseCompactNumber('68'), 68);
+  assert.equal(EH.parseCompactNumber('1,234'), 1234);
+  assert.equal(EH.parseCompactNumber('N/A'), null, 'N/A must not become 0');
+  assert.equal(EH.parseCompactNumber(''), null);
+  assert.equal(EH.parsePercent('10.29%'), 10.29);
+  assert.equal(EH.parsePercent('N/A'), null);
+  assert.equal(EH.parseIsoDate('2026-02-02'), '2026-02-02');
+  assert.equal(EH.parseIsoDate('nope'), null);
+});
+
+await test('EHunt tags outrank the page-link proxy but never the Etsy API', () => {
+  const panel = {
+    tags: ['Editable PDF Planner', 'Printable Planner'],
+    tagCount: 2,
+    tagVolumes: { 'Editable PDF Planner': 14800000 },
+    isDigital: true,
+    ehuntTotalFavorites: 11,
+    ehuntShopSales: 775,
+    ehuntEstimatedSales: 68,
+  };
+
+  const overProxy = EH.mergeEhuntRecord(
+    { tags: ['calendar'], tagCount: 1, tagSource: 'page-links' }, panel,
+  );
+  assert.equal(overProxy.tagSource, 'ehunt');
+  assert.equal(overProxy.tags.length, 2, 'EHunt replaces the weaker proxy');
+
+  const apiTags = ['a', 'b', 'c'];
+  const underApi = EH.mergeEhuntRecord(
+    { tags: apiTags, tagCount: 3, tagSource: 'api' }, panel,
+  );
+  assert.deepEqual(underApi.tags, apiTags, 'the API stays authoritative');
+  assert.equal(underApi.tagSource, 'api');
+  assert.ok(underApi.tagVolumes, 'volumes are still kept as context');
+});
+
+await test('EHunt only gap-fills Etsy fields and keeps estimates prefixed', () => {
+  const scraped = { favoritesCount: 1482, viewsCount: null, shopTotalSales: null };
+  const merged = EH.mergeEhuntRecord(scraped, {
+    ehuntTotalFavorites: 11, ehuntTotalViews: 20, ehuntShopSales: 775,
+    ehuntEstimatedSales: 68, ehuntEstimatedRevenue: 51, ehuntConversionRate: 3.5,
+  });
+  assert.equal(merged.favoritesCount, 1482, 'a value read from Etsy is never overwritten');
+  assert.equal(merged.viewsCount, 20, 'but a gap is filled');
+  assert.equal(merged.shopTotalSales, 775);
+  assert.equal(merged.ehuntEstimatedSales, 68, 'estimates stay under ehunt* names');
+  assert.equal(merged.ehuntEstimatedRevenue, 51);
+  assert.ok(!('estimatedSales' in merged), 'never presented as an Etsy figure');
+});
+
+await test('no panel is a normal outcome, not an error', () => {
+  const merged = EH.mergeEhuntRecord({ tags: ['x'], tagSource: 'page-links' }, null);
+  assert.equal(merged.ehuntPanel, false);
+  assert.equal(merged.tagSource, 'page-links');
+  assert.deepEqual(merged.tags, ['x']);
+});
+
+await test('EHunt fields are part of the exported schema', async () => {
+  const { DETAIL_FIELDS: fields } = await import(path.join(ext, 'src/common/constants.js'));
+  for (const f of ['isDigital', 'productType', 'tagVolumes', 'ehuntEstimatedSales',
+    'ehuntEstimatedRevenue', 'ehuntConversionRate', 'ehuntPanel']) {
+    assert.ok(fields.includes(f), `missing from DETAIL_FIELDS: ${f}`);
+  }
+});
+
 group('Etsy Open API enrichment');
 
 const api = await import(path.join(ext, 'src/common/etsy-api.js'));
@@ -579,6 +652,36 @@ await test('rows pass through untouched when the option is off', () => {
   assert.equal(runnerTesting.applyRowFilters(rows, undefined).rows.length, 2);
 });
 
+await test('digitalOnly keeps only listings Etsy labelled digital', () => {
+  const rows = [
+    { listingId: '1', isDigital: true },
+    { listingId: '2', isDigital: false },
+    { listingId: '3', isDigital: null },
+  ];
+  const out = runnerTesting.applyRowFilters(rows, { digitalOnly: true });
+  assert.deepEqual(out.rows.map((r) => r.listingId), ['1'],
+    'unlabelled rows are not assumed digital');
+  assert.equal(out.nonDigitalSkipped, 2, 'over-filtering must be visible in the count');
+});
+
+await test('digitalOnly and skip-ads compose', () => {
+  const rows = [
+    { listingId: '1', isDigital: true, sponsored: false },
+    { listingId: '2', isDigital: true, sponsored: true },
+    { listingId: '3', isDigital: false, sponsored: false },
+  ];
+  const out = runnerTesting.applyRowFilters(rows, { digitalOnly: true, excludeSponsored: true });
+  assert.deepEqual(out.rows.map((r) => r.listingId), ['1']);
+  assert.equal(out.adsSkipped, 1);
+  assert.equal(out.nonDigitalSkipped, 1);
+});
+
+await test('digitalOnly off leaves every row alone', () => {
+  const rows = [{ isDigital: false }, { isDigital: null }];
+  assert.equal(runnerTesting.applyRowFilters(rows, {}).rows.length, 2);
+  assert.equal(runnerTesting.applyRowFilters(rows, {}).nonDigitalSkipped, 0);
+});
+
 await test('bestsellerOnly does not filter rows locally (facet does the work)', () => {
   // Badge detection is best-effort; filtering locally too would drop good rows.
   const rows = [{ listingId: '1', bestseller: false }, { listingId: '2', bestseller: true }];
@@ -652,10 +755,13 @@ await test('detail records always carry the documented schema', () => {
     scrapedAt: '2026-05-13T04:35:22Z',
   }, []);
   for (const field of DETAIL_FIELDS) {
+    // Fields contributed by later stages: metrics.js (history/scores) and the
+    // optional EHunt / API enrichment. Exports fill any absent key with null.
     if (['firstScrapedAt', 'lastScrapedAt', 'snapshotCount', 'daysTracked', 'daysSinceListed',
       'favoritesDelta', 'favoritesPerDay', 'favoritesPerDayLifetime', 'reviewsDelta',
       'reviewsPerDay', 'demandScore', 'momentumScore', 'competitiveGapScore',
-      'opportunityScore'].includes(field)) continue; // added later by metrics
+      'opportunityScore', 'tagVolumes', 'ehuntEstimatedSales', 'ehuntEstimatedRevenue',
+      'ehuntConversionRate', 'ehuntReviewRatio', 'ehuntPanel'].includes(field)) continue;
     assert.ok(Object.prototype.hasOwnProperty.call(record, field), `missing field: ${field}`);
   }
   assert.equal(record.isPersonalizable, false, 'booleans never null');

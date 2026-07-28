@@ -316,6 +316,9 @@
     const crumbs = all(doc, SELECTORS.breadcrumb).map((a) => text(a)).filter(Boolean);
     if (crumbs.length > 1) out.categoryPath = crumbs.join(' > ');
 
+    // --- product type ------------------------------------------------------
+    Object.assign(out, readProductType(doc, blob));
+
     // --- shipping incentive ------------------------------------------------
     out.freeShipping = readFreeShipping(doc, blob);
 
@@ -479,6 +482,33 @@
     }
 
     return tags;
+  }
+
+  /**
+   * Digital vs physical.
+   *
+   * Etsy states this positively for digital listings ("Instant Download",
+   * "Digital download", "Digital file type(s): PDF") and describes delivery for
+   * physical ones ("Ships from", "Arrives by", "Cost to ship"). Price is NOT used
+   * as a signal — cheap physical items exist and expensive digital ones do too.
+   * Unknown stays null rather than defaulting to physical.
+   */
+  const DIGITAL_MARKERS = /instant download|digital download|digital file|digital files|digital item|downloadable file/i;
+  const PHYSICAL_MARKERS = /ships? from|arrives by|cost to ship|shipping upgrades available|ready to ship/i;
+
+  function readProductType(doc, blob) {
+    const out = {};
+    const hay = String(blob || '');
+    const digital = DIGITAL_MARKERS.test(hay);
+    const physical = PHYSICAL_MARKERS.test(hay);
+    if (digital) {
+      out.isDigital = true;
+      out.productType = 'Digital';
+    } else if (physical) {
+      out.isDigital = false;
+      out.productType = 'Physical';
+    }
+    return out;
   }
 
   const FREE_SHIPPING = /\bfree\s+(?:standard\s+|domestic\s+)?(?:shipping|delivery|postage)\b/i;
@@ -761,6 +791,9 @@
       // link-derived proxy; the Etsy API layer upgrades this to 'api' when it
       // supplies the real tag array. Never left implicit.
       tagSource: dom.tags && dom.tags.length ? 'page-links' : null,
+
+      isDigital: dom.isDigital === undefined ? null : dom.isDigital,
+      productType: pick(dom.productType),
 
       freeShipping: Boolean(dom.freeShipping),
 

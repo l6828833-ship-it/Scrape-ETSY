@@ -177,6 +177,8 @@ const extractDetailSource = readFileSync(path.join(root, 'extension/src/content/
 const searchFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-search-page.html')).href;
 const regressionFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-search-page-regressions.html')).href;
 const listingFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-listing-page.html')).href;
+const ehuntFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-listing-page-ehunt.html')).href;
+const ehuntParseSource = readFileSync(path.join(root, 'extension/src/common/ehunt-parse.js'), 'utf8');
 const challengeFixture = pathToFileURL(path.join(root, 'tests/fixtures/etsy-challenge-page.html')).href;
 
 let exitCode = 0;
@@ -430,6 +432,12 @@ try {
       assert.equal(out.nothing, null);
     });
 
+        await test('detects a digital listing from the page copy', () => {
+      // The main fixture is a printable download.
+      assert.equal(d.isDigital, true);
+      assert.equal(d.productType, 'Digital');
+    });
+
     await test('the fixture description is the full text, not the JSON-LD summary', () => {
       assert.match(d.description, /Instant download 2026 wall calendar/);
       assert.ok(d.description.length > 40, `suspiciously short: ${d.description}`);
@@ -577,6 +585,89 @@ try {
       assert.equal(out.valid, 4.8);
       assert.equal(out.ariaOnly, 3.5);
       assert.equal(out.none, null, 'a price-styled number is not a rating');
+    });
+
+    session.close();
+    await closePage(targetId);
+  }
+
+  // ------------------------------------------ EHunt panel on a listing page
+  {
+    const { session, targetId } = await openPage(ehuntFixture);
+    await session.evaluate(parseSource);
+    await session.evaluate(detailParseSource);
+    await session.evaluate(ehuntParseSource);
+
+    const out = JSON.parse(await session.evaluate(`(() => {
+      const scraped = EtsyDetail.parseListingPage({
+        html: document.documentElement.outerHTML, doc: document,
+        context: { listingId: '4451164796', scrapeReviews: false }
+      });
+      const panel = EtsyEhunt.parsePanel(document);
+      const merged = EtsyEhunt.mergeEhuntRecord(scraped.record, panel);
+      return JSON.stringify({ present: EtsyEhunt.isPresent(document), panel, merged });
+    })()`));
+
+    await test('finds the EHunt panel in the page DOM', () => {
+      assert.equal(out.present, true);
+      assert.ok(out.panel, 'panel parsed');
+      assert.equal(out.panel.ehuntPanel, true);
+    });
+
+    await test('reads all 13 real tags with their search volumes', () => {
+      assert.equal(out.panel.tags.length, 13, 'the complete tag set, not a proxy');
+      assert.equal(out.panel.tags[0], 'Editable PDF Planner');
+      assert.equal(out.panel.tags[12], 'Teacher Planner');
+      assert.equal(out.panel.tagVolumes['Editable PDF Planner'], 14800000, '14.8M');
+      assert.equal(out.panel.tagVolumes['Activities Calendar'], 656900, '656.9K');
+      assert.ok(!out.panel.tags.some((t) => /\(/.test(t)), 'volume suffix stripped from labels');
+      assert.equal(out.merged.tagSource, 'ehunt');
+      assert.equal(out.merged.tags.length, 13);
+    });
+
+    await test('reads the stats table incl. product type', () => {
+      assert.equal(out.panel.isDigital, true);
+      assert.equal(out.panel.productType, 'Digital');
+      assert.equal(out.panel.ehuntEstimatedSales, 68);
+      assert.equal(out.panel.ehuntEstimatedRevenue, 51);
+      assert.equal(out.panel.ehuntTotalReviews, 7);
+      assert.equal(out.panel.ehuntTotalFavorites, 11);
+      assert.equal(out.panel.ehuntShopSales, 775);
+      assert.equal(out.panel.ehuntReviewRatio, 10.29);
+      assert.equal(out.panel.ehuntReleaseDate, '2026-02-02');
+    });
+
+    await test('"N/A" stays null instead of becoming zero', () => {
+      assert.equal(out.panel.ehuntTotalViews, undefined, 'Total Views was N/A');
+      assert.equal(out.panel.ehuntConversionRate, undefined, 'Avg.Conv.Rate was N/A');
+      assert.notEqual(out.merged.viewsCount, 0, 'a gap must never be filled with 0');
+    });
+
+    await test('the merged record keeps Etsy-observed values', () => {
+      assert.equal(out.merged.price, 0.91, 'price still from the page');
+      assert.equal(out.merged.isDigital, true);
+      assert.match(out.merged.description, /cute and practical/);
+      assert.equal(out.merged.listingId, '4451164796');
+    });
+
+    await test('a physical listing is labelled physical, not digital', async () => {
+      const kind = JSON.parse(await session.evaluate(`(() => {
+        const read = (body) => {
+          const doc = new DOMParser().parseFromString(
+            '<html><body><div data-listing-id="1">' + body + '</div></body></html>', 'text/html');
+          const r = EtsyDetail.fromDom(doc);
+          return { isDigital: r.isDigital === undefined ? null : r.isDigital, type: r.productType || null };
+        };
+        return JSON.stringify({
+          digital: read('<p>Instant Download</p><p>Digital file type(s): PDF</p>'),
+          physical: read('<p>Ships from Portland, Oregon</p><p>Arrives by Feb 20</p>'),
+          silent: read('<p>A lovely thing</p>')
+        });
+      })()`));
+      assert.equal(kind.digital.isDigital, true);
+      assert.equal(kind.physical.isDigital, false);
+      assert.equal(kind.physical.type, 'Physical');
+      assert.equal(kind.silent.isDigital, null, 'never guessed when the page is silent');
     });
 
     session.close();

@@ -26,6 +26,8 @@ const FIELD_BINDINGS = [
   ['positionMode', 'positionMode', 'text'],
   ['bestsellerOnly', 'bestsellerOnly', 'bool'],
   ['excludeSponsored', 'excludeSponsored', 'bool'],
+  ['digitalOnly', 'digitalOnly', 'bool'],
+  ['useEhuntPanel', 'useEhuntPanel', 'bool'],
   ['freeShippingOnly', 'freeShippingOnly', 'bool'],
   ['scrapeDetails', 'scrapeDetails', 'bool'],
   ['maxDetailListings', 'maxDetailListings', 'int'],
@@ -183,6 +185,7 @@ function renderState(state, counts, running) {
   el('statQueries').textContent = `${fmt(p.queriesDone || 0)} / ${fmt(p.queriesTotal || 0)}`;
   el('statDupes').textContent = fmt(p.duplicates || 0);
   el('statAds').textContent = fmt(p.adsSkipped || 0);
+  el('statNonDigital').textContent = fmt(p.nonDigitalSkipped || 0);
   el('statRetries').textContent = fmt(p.retries || 0);
   el('statBlocks').textContent = fmt(p.blocks || 0);
   el('statDetails').textContent = `${fmt(p.detailsDone || 0)} / ${fmt(p.detailsPlanned || 0)}`;

@@ -426,6 +426,9 @@
       reviewCount: reviewCount,
       freeShipping: hasBadge(el, FREE_SHIPPING_BADGE, CONDITIONAL_SHIPPING),
       bestseller: hasBadge(el, BESTSELLER_BADGE),
+      // Tri-state on purpose: Etsy labels digital items, but says nothing at all
+      // for physical ones, so "no label" is unknown rather than proof of physical.
+      isDigital: hasBadge(el, DIGITAL_BADGE) ? true : null,
       sponsored: detectSponsored(el, blob),
       position: index + 1,
       _source: 'dom',
@@ -500,6 +503,7 @@
   /** "Free shipping on orders over $35" is a shop promotion, not this listing. */
   const CONDITIONAL_SHIPPING = /orders? over|when you spend|on orders of/i;
   const BESTSELLER_BADGE = /^best\s?seller\b/i;
+  const DIGITAL_BADGE = /^(?:digital\s+(?:download|file)|instant\s+download)\b/i;
 
   /**
    * Badges are their own short elements. Testing the whole card's text instead
@@ -691,6 +695,7 @@
       freeShipping: Boolean(rec.freeShipping),
       bestseller: Boolean(rec.bestseller),
       sponsored: Boolean(rec.sponsored),
+      isDigital: rec.isDigital === true ? true : (rec.isDigital === false ? false : null),
       scrapedAt: ctx.scrapedAt || new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
       _source: rec._source || null,
       _sourceUrl: ctx.sourceUrl || null,

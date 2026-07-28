@@ -55,6 +55,25 @@
     return clicked;
   }
 
+  /**
+   * Wait for the EHunt panel, then parse it. Returns null when EHunt is not
+   * installed or has not rendered — an absent third-party panel is a normal
+   * outcome, never an error.
+   */
+  async function readEhunt(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    let panel = null;
+    while (Date.now() < deadline) {
+      if (globalThis.EtsyEhunt.isPresent(document)) {
+        panel = globalThis.EtsyEhunt.parsePanel(document);
+        // Its tag list fills in after the panel frame appears; wait for tags.
+        if (panel && panel.tags && panel.tags.length) return panel;
+      }
+      await sleep(300);
+    }
+    return panel;
+  }
+
   globalThis.__etsyExtractDetail = async function __etsyExtractDetail(options) {
     const opts = options || {};
     const context = opts.context || {};
@@ -69,6 +88,16 @@
       }
       const html = document.documentElement ? document.documentElement.outerHTML : '';
       const result = globalThis.EtsyDetail.parseListingPage({ html, doc: document, context });
+
+      // EHunt (Etsy Rank Tool) injects its panel into this same DOM, and it is
+      // the one place a listing's real 13 tags appear on the page. It renders
+      // asynchronously, so wait briefly before reading.
+      if (context.useEhuntPanel !== false && globalThis.EtsyEhunt) {
+        const ehunt = await readEhunt(opts.ehuntTimeoutMs == null ? 6000 : opts.ehuntTimeoutMs);
+        result.record = globalThis.EtsyEhunt.mergeEhuntRecord(result.record, ehunt);
+        result.ehuntFound = Boolean(ehunt);
+      }
+
       result.locationHref = location.href;
       return result;
     } catch (err) {
