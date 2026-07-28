@@ -261,6 +261,14 @@ which columns exist**:
 | `search` — Search rows | The search grid: query, position, title, price, shop, rating, reviewCount, badges, `isDigital` | `tags`, `description`, `favoritesCount`, `shopTotalSales`, stock, variations, materials |
 | `details` — Listing details | Everything above plus `tags`, `description`, favourites, stock, variations, materials, shop authority and the trend metrics | — |
 | `reviews` | One row per review | — |
+| `history` — Snapshot history | One row per observation of one listing: `observedAt`, favourites, reviewCount, price, quantity. This is the raw series every velocity figure is derived from, it spans runs, and `Clear` keeps it | — |
+| `log` — Run log | One row per log entry: timestamp, level, message. The per-listing gap reporting and the tag-route diagnosis, after the fact | — |
+
+**All datasets** contains all five: Excel gets one sheet each, JSON gets one key
+each plus a `run` summary (status, queries, counts, timings). The list of tables
+is defined once, in `ALL_DATASETS`, so a dataset cannot be previewable on its own
+while quietly missing from the export named "everything" — which is exactly what
+had happened to `history` and `log`. The API key is never written to an export.
 
 The search grid genuinely has no tags in it — Etsy does not put them there — so
 an export of that dataset can never contain them no matter how the scrape ran.

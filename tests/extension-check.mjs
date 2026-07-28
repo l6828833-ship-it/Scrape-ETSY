@@ -664,7 +664,8 @@ try {
       });
     })()`);
     const out = JSON.parse(raw);
-    assert.deepEqual(out.options, ['search', 'details', 'reviews', 'all']);
+    assert.deepEqual(out.options,
+      ['search', 'details', 'reviews', 'history', 'log', 'all']);
     assert.ok(out.headers.includes('Favs/day'), `detail columns expected, got ${out.headers}`);
     assert.ok(out.headers.includes('Opp'));
     assert.match(out.hint, /Deep listing intelligence/, 'empty state should explain itself');
@@ -708,6 +709,73 @@ try {
     assert.match(out.summary, /tags/i, 'collapsed summary must mention tags');
     assert.match(out.label, /tags/i);
     assert.match(out.label, /description/i);
+  });
+
+  await test('the snapshot history is reachable from the UI', async () => {
+    // It was recorded on every deep scrape and then had no way out: no message,
+    // no dataset, no sheet. Every velocity number is derived from it.
+    const out = JSON.parse(await ui.evaluate(`(async () => {
+      const res = await chrome.runtime.sendMessage({ type: 'GET_HISTORY_ROWS' });
+      // Responses are wrapped as { ok, result }.
+      return JSON.stringify({
+        ok: res && res.ok === true,
+        hasTotal: typeof (res.result || {}).total === 'number',
+        isArray: Array.isArray((res.result || {}).rows)
+      });
+    })()`));
+    assert.equal(out.ok, true, 'the worker accepts the new message type');
+    assert.equal(out.hasTotal, true, 'the worker answers GET_HISTORY_ROWS');
+    assert.equal(out.isArray, true);
+  });
+
+  await test('"All datasets" covers every table, not just the first three', async () => {
+    const out = JSON.parse(await ui.evaluate(`(async () => {
+      const { ALL_DATASETS, DATASET_FIELDS, DATASET_LABELS } = await import('/src/ui/export.js');
+      return JSON.stringify({
+        all: ALL_DATASETS,
+        haveFields: ALL_DATASETS.every(d => Array.isArray(DATASET_FIELDS[d]) && DATASET_FIELDS[d].length),
+        haveLabels: ALL_DATASETS.every(d => typeof DATASET_LABELS[d] === 'string')
+      });
+    })()`));
+    assert.deepEqual(out.all, ['search', 'details', 'reviews', 'history', 'log'],
+      'history and log are part of "all" now');
+    assert.equal(out.haveFields, true, 'every dataset in "all" has an export schema');
+    assert.equal(out.haveLabels, true, 'and a sheet name');
+  });
+
+  await test('the run summary in a JSON export never carries the API key', async () => {
+    // The summary describes the run, and the settings object it is derived from
+    // holds the Etsy API key. That must not reach a file on disk.
+    const out = JSON.parse(await ui.evaluate(`(async () => {
+      await chrome.runtime.sendMessage({ type: 'SET_SETTINGS',
+        settings: { etsyApiKey: 'SECRETKEY123', queries: ['x'] } });
+      const { exportDataset } = await import('/src/ui/export.js');
+      let captured = null;
+      const realDownload = chrome.downloads.download;
+      chrome.downloads.download = async () => { throw new Error('blocked in test'); };
+      const origCreate = URL.createObjectURL;
+      URL.createObjectURL = (blob) => { captured = blob; return origCreate(blob); };
+      try {
+        await exportDataset('all', 'json', {
+          search: [{ listingId: '1', title: 't' }], details: [], reviews: [],
+          history: [], log: [{ at: 'x', level: 'info', message: 'm', detail: null }],
+          run: { status: 'done', queries: ['x'], counts: { rows: 1 } }
+        });
+      } catch (_) { /* download is stubbed out */ }
+      chrome.downloads.download = realDownload;
+      URL.createObjectURL = origCreate;
+      const text = captured ? await captured.text() : '';
+      return JSON.stringify({
+        hasRun: text.includes('"run"'),
+        hasLog: text.includes('"log"'),
+        hasHistory: text.includes('"history"'),
+        leaksKey: text.includes('SECRETKEY123')
+      });
+    })()`));
+    assert.equal(out.leaksKey, false, 'the API key must never appear in an export');
+    assert.equal(out.hasRun, true, 'the run summary is included');
+    assert.equal(out.hasLog, true);
+    assert.equal(out.hasHistory, true);
   });
 
   await test('multi-sheet workbook builds inside the extension page', async () => {

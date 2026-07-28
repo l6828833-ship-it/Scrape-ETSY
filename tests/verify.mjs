@@ -1482,7 +1482,7 @@ await test('XLSX escapes XML metacharacters in values', () => {
 
 group('Deep-scrape exports');
 
-const { toWorkbook, DATASET_FIELDS, exportDataset } = await import(path.join(ext, 'src/ui/export.js'));
+const { toWorkbook, DATASET_FIELDS, ALL_DATASETS, exportDataset } = await import(path.join(ext, 'src/ui/export.js'));
 
 const detailRow = {
   listingId: '1544102938',
@@ -1529,15 +1529,40 @@ await test('review export uses the review schema', async () => {
 });
 
 await test('workbook holds one sheet per non-empty dataset', async () => {
-  const blob = toWorkbook({ search: sampleRows, details: [detailRow], reviews: [reviewRow] });
+  // All five tables, including the two that used to be recorded and then had no
+  // way out of the extension: the snapshot series and the run log.
+  const blob = toWorkbook({
+    search: sampleRows,
+    details: [detailRow],
+    reviews: [reviewRow],
+    history: [{
+      listingId: '1887845264', observedAt: '2026-07-28T22:03:19Z',
+      favorites: 331, reviewCount: 23, price: 3.97, quantity: null,
+    }],
+    log: [{ at: '2026-07-28T22:03:19Z', level: 'info', message: 'Deep scrape gaps — none', detail: null }],
+  });
   const bytes = new Uint8Array(await blob.arrayBuffer());
   assert.equal(bytes[0], 0x50);
   writeFileSync(path.join(root, 'tests/out/sample-workbook.xlsx'), bytes);
 
   const xml = new TextDecoder().decode(bytes);
-  assert.ok(xml.includes('sheet1.xml') && xml.includes('sheet2.xml') && xml.includes('sheet3.xml'),
-    'three worksheet parts expected');
-  assert.ok(xml.includes('Listing details') && xml.includes('Reviews'));
+  for (const n of [1, 2, 3, 4, 5]) {
+    assert.ok(xml.includes(`sheet${n}.xml`), `worksheet part ${n} expected`);
+  }
+  for (const name of ['Search rows', 'Listing details', 'Reviews', 'Snapshot history', 'Run log']) {
+    assert.ok(xml.includes(name), `sheet named "${name}" expected`);
+  }
+});
+
+await test('"All datasets" is defined as every table, so adding one cannot be forgotten', () => {
+  // The bug this guards: "all" listed its tables by hand in three places, so a
+  // new dataset could be previewable and exportable on its own while silently
+  // missing from the thing named "everything".
+  for (const dataset of ALL_DATASETS) {
+    assert.ok(Array.isArray(DATASET_FIELDS[dataset]) && DATASET_FIELDS[dataset].length,
+      `${dataset} needs an export schema`);
+  }
+  assert.deepEqual(ALL_DATASETS, ['search', 'details', 'reviews', 'history', 'log']);
 });
 
 await test('workbook skips datasets with no rows', async () => {

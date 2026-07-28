@@ -88,6 +88,14 @@ async function handleMessage(message) {
       return { total: reviews.length, rows: limit > 0 ? reviews.slice(0, limit) : reviews };
     }
 
+    case MSG.GET_HISTORY_ROWS: {
+      // The snapshot series behind every velocity figure. Survives `Clear`, so it
+      // can span runs and is worth exporting on its own.
+      const rows = await history.exportHistory();
+      const limit = Number(message.limit) || 0;
+      return { total: rows.length, rows: limit > 0 ? rows.slice(0, limit) : rows };
+    }
+
     case MSG.GET_RESULTS: {
       const rows = await store.getRows();
       const limit = Number(message.limit) || 0;
