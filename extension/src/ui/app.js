@@ -61,6 +61,8 @@ const PREVIEW_COLUMNS = {
     ['Qty', 'num', (r) => fmtOrDash(r.quantityAvailable)],
     ['Reviews', 'num', (r) => fmtOrDash(r.reviewCount)],
     ['Shop sales', 'num', (r) => fmtOrDash(r.shopTotalSales)],
+    ['Since', 'num', (r) => fmtOrDash(r.shopMemberSince)],
+    ['Flags', 'flags', (r) => r],
     ['Gap', 'num', (r) => fmtOrDash(r.competitiveGapScore)],
     ['Opp', 'num', (r) => fmtOrDash(r.opportunityScore)],
     ['Tracked', 'num', (r) => (r.snapshotCount ? `${r.snapshotCount}x` : '—')],
@@ -296,7 +298,8 @@ function flagsCell(row) {
     row.sponsored && ['ad', 'Ad'],
     row.freeShipping && ['free', 'Free ship'],
     row.bestseller && ['best', 'Best'],
-    row.starSeller && ['best', 'Star'],
+    row.isStarSeller && ['best', 'Star'],
+    row.isPersonalizable && ['', 'Custom'],
   ].filter(Boolean);
   if (!flags.length) {
     cell.textContent = '—';
