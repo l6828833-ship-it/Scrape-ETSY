@@ -402,6 +402,33 @@ await test('dedupe per_query keeps the same listing across different queries', (
   assert.equal(b.kept.length, 1, 'other query gets its own namespace');
 });
 
+group('Where scraped pages open');
+
+const tabs = await import(path.join(ext, 'src/background/tabs.js'));
+
+await test('a run that needs a visible page never uses a hidden tab', () => {
+  // Hidden tabs report visibilityState 'hidden', so EHunt never renders in them.
+  assert.equal(tabs.upgradeModeForVisibility('background', true), 'window');
+  assert.equal(tabs.upgradeModeForVisibility('window', true), null, 'already visible');
+  assert.equal(tabs.upgradeModeForVisibility('foreground', true), null);
+  assert.equal(tabs.upgradeModeForVisibility('background', false), null,
+    'no upgrade when nothing needs to be visible');
+  assert.equal(tabs.upgradeModeForVisibility('nonsense', true), 'window',
+    'an unknown mode is treated as background');
+});
+
+await test('the visible window is the default', () => {
+  assert.equal(DEFAULTS.tabMode, 'window');
+  assert.deepEqual(Object.keys(tabs.TAB_MODES).sort(), ['background', 'foreground', 'window']);
+});
+
+await test('tabMode and the EHunt wait are validated', () => {
+  assert.equal(normalizeSettings({ tabMode: 'sideways' }).tabMode, 'window');
+  assert.equal(normalizeSettings({ tabMode: 'foreground' }).tabMode, 'foreground');
+  assert.equal(normalizeSettings({ ehuntWaitMs: 999999 }).ehuntWaitMs, 60000);
+  assert.equal(normalizeSettings({ ehuntWaitMs: -5 }).ehuntWaitMs, 0);
+});
+
 group('EHunt panel (numbers and merge rules)');
 
 await import(path.join(ext, 'src/common/ehunt-parse.js'));

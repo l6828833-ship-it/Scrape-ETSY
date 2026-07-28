@@ -5,6 +5,8 @@
  * lazy-loaded cards appear and challenge pages can be solved by the user.
  */
 
+import { openScrapeTab } from './tabs.js';
+
 const INJECT_FILES = ['src/common/parse.js', 'src/content/extract.js'];
 
 function waitForTabComplete(tabId, timeoutMs, signal) {
@@ -81,8 +83,7 @@ export async function scrapeInTab(url, opts = {}) {
 
   let tabId = null;
   try {
-    const tab = await chrome.tabs.create({ url, active: false });
-    tabId = tab.id;
+    ({ tabId } = await openScrapeTab(url, { tabMode: opts.tabMode }));
     await waitForTabComplete(tabId, loadTimeoutMs, signal);
 
     let result = await runExtract(tabId, context, tuning);

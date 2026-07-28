@@ -90,6 +90,14 @@ export const DEFAULTS = {
   positionMode: 'per_page',
   /** Grid size assumed when positionMode === 'global'. */
   resultsPerPage: 64,
+  /**
+   * Where scraped pages open: 'background' (hidden tab in your window),
+   * 'window' (one separate unfocused window — required for third-party panels
+   * like EHunt, which do not render in hidden tabs), or 'foreground'.
+   */
+  tabMode: 'window',
+  /** How long to wait for the EHunt panel to render its tags. */
+  ehuntWaitMs: 8000,
   /** Pause and surface the tab so a human can solve a CAPTCHA. */
   manualCaptchaSolve: true,
   /** Keep scraped tabs open (debugging). */

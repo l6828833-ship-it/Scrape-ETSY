@@ -11,6 +11,7 @@
 
 import { ETSY_LISTING_URL } from '../common/constants.js';
 import { fetchListingPage } from './fetch-engine.js';
+import { openScrapeTab } from './tabs.js';
 import { parseDetailOffscreen, offscreenAvailable } from './offscreen.js';
 // Classic scripts: importing publishes globalThis.EtsyParse / EtsyDetail.
 import '../common/parse.js';
@@ -134,8 +135,7 @@ export async function fetchDetailViaTab(url, opts = {}) {
 
   let tabId = null;
   try {
-    const tab = await chrome.tabs.create({ url, active: false });
-    tabId = tab.id;
+    ({ tabId } = await openScrapeTab(url, { tabMode: opts.tabMode }));
     await waitForComplete(tabId, loadTimeoutMs, signal);
 
     await chrome.scripting.executeScript({ target: { tabId }, files: INJECT_FILES });
@@ -164,6 +164,7 @@ export async function fetchDetailViaTab(url, opts = {}) {
       record: result.record,
       reviews: result.reviews || [],
       counts: result.counts,
+      ehuntFound: Boolean(result.ehuntFound),
     };
   } catch (err) {
     return {
